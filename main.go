@@ -28,6 +28,7 @@ func execute_statement(stmt Statement) error {
 	switch stmt.Type {
 	case STATEMENT_INSERT:
 		fmt.Print("This is where we would do an insert.\n")
+		fmt.Printf("We would insert: (%d, %s, %s)\n", stmt.RowToInsert.ID, stmt.RowToInsert.Username, stmt.RowToInsert.Email)
 	case STATEMENT_SELECT:
 		fmt.Print("This is where we would do a select.\n")
 	}
