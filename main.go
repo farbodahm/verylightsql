@@ -4,25 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 )
 
 const (
 	VERSION = "0.1.0"
 )
-
-// StatementType represents the type of SQL statement
-type StatementType int
-
-const (
-	STATEMENT_INSERT StatementType = iota
-	STATEMENT_SELECT
-)
-
-// Statement represents a SQL statement
-type Statement struct {
-	Type StatementType
-}
 
 func execute_meta_command(input string) error {
 	switch input {
@@ -36,23 +22,6 @@ func execute_meta_command(input string) error {
 		return fmt.Errorf("unrecognized command: %s", input)
 	}
 	return nil
-}
-
-func prepare_statement(input string) (Statement, error) {
-	var stmt Statement
-
-	action := strings.Split(input, " ")[0]
-
-	switch action {
-	case "insert":
-		stmt.Type = STATEMENT_INSERT
-	case "select":
-		stmt.Type = STATEMENT_SELECT
-	default:
-		return stmt, fmt.Errorf("unrecognized keyword at start of '%s'", input)
-	}
-
-	return stmt, nil
 }
 
 func execute_statement(stmt Statement) error {
