@@ -4,25 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 )
 
 const (
 	VERSION = "0.1.0"
 )
-
-// StatementType represents the type of SQL statement
-type StatementType int
-
-const (
-	STATEMENT_INSERT StatementType = iota
-	STATEMENT_SELECT
-)
-
-// Statement represents a SQL statement
-type Statement struct {
-	Type StatementType
-}
 
 func execute_meta_command(input string) error {
 	switch input {
@@ -38,35 +24,53 @@ func execute_meta_command(input string) error {
 	return nil
 }
 
-func prepare_statement(input string) (Statement, error) {
-	var stmt Statement
-
-	action := strings.Split(input, " ")[0]
-
-	switch action {
-	case "insert":
-		stmt.Type = STATEMENT_INSERT
-	case "select":
-		stmt.Type = STATEMENT_SELECT
-	default:
-		return stmt, fmt.Errorf("unrecognized keyword at start of '%s'", input)
-	}
-
-	return stmt, nil
+func executeInsert(stmt Statement, table *Table) error {
+	return table.Insert(&stmt.RowToInsert)
 }
 
-func execute_statement(stmt Statement) error {
+func executeSelect(stmt Statement, table *Table) error {
+	rows := table.SelectAll()
+	for _, row := range rows {
+		printRow(&row)
+	}
+	return nil
+}
+
+func printRow(row *Row) {
+	// Convert byte arrays to strings for display
+	username := string(row.Username[:])
+	email := string(row.Email[:])
+
+	// Trim null bytes for display
+	for i, b := range row.Username {
+		if b == 0 {
+			username = string(row.Username[:i])
+			break
+		}
+	}
+	for i, b := range row.Email {
+		if b == 0 {
+			email = string(row.Email[:i])
+			break
+		}
+	}
+
+	fmt.Printf("(%d, %s, %s)\n", row.ID, username, email)
+}
+
+func execute_statement(stmt Statement, table *Table) error {
 	switch stmt.Type {
 	case STATEMENT_INSERT:
-		fmt.Print("This is where we would do an insert.\n")
+		return executeInsert(stmt, table)
 	case STATEMENT_SELECT:
-		fmt.Print("This is where we would do a select.\n")
+		return executeSelect(stmt, table)
 	}
 	return nil
 }
 
 func main() {
 	fmt.Printf("Verylightsql v%s\n", VERSION)
+	table := NewTable()
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -87,15 +91,15 @@ func main() {
 
 		stmt, err := prepare_statement(input)
 		if err != nil {
-			fmt.Printf("%s\n", err)
+			fmt.Printf("here %s\n", err)
 			continue
 		}
 
-		err = execute_statement(stmt)
+		err = execute_statement(stmt, table)
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			continue
 		}
+		fmt.Println("Executed.")
 	}
-
 }
