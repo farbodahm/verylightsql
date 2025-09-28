@@ -77,6 +77,7 @@ func main() {
 		fmt.Print("> ")
 
 		input, err := reader.ReadString('\n')
+		input = input[:len(input)-1] // remove newline
 		if err != nil {
 			panic(err)
 		}

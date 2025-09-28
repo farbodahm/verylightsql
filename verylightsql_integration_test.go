@@ -1,0 +1,95 @@
+//go:build integration
+// +build integration
+
+package main_test
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+)
+
+const (
+	verylightsqlBinary     = "./verylightsql"
+	verylightsqlVersion    = "0.1.0"
+	integrationTestTimeout = 3 * time.Second
+)
+
+func runScript(t *testing.T, commands []string) (lines []string, all string, code int) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), integrationTestTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, verylightsqlBinary)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	go func() {
+		w := bufio.NewWriter(stdin)
+		for _, c := range commands {
+			_, _ = w.WriteString(c + "\n")
+		}
+		_ = w.Flush()
+		_ = stdin.Close()
+	}()
+
+	_ = cmd.Wait()
+
+	all = stdout.String() + stderr.String()
+	all = strings.ReplaceAll(all, "\r\n", "\n")
+	all = strings.TrimRight(all, "\n")
+
+	if all != "" {
+		lines = strings.Split(all, "\n")
+	}
+
+	if ps := cmd.ProcessState; ps != nil {
+		code = ps.ExitCode()
+	} else {
+		code = -1 // timed out / killed
+	}
+	return
+}
+
+func Test_InsertsAndRetrievesRow(t *testing.T) {
+	out, full, code := runScript(t, []string{
+		"insert 1 user1 person1@example.com",
+		"select",
+		".exit",
+	})
+	if code != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+	}
+
+	want := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"> Executed.",
+		"> (1, user1, person1@example.com)",
+		"Executed.",
+		"> Bye!",
+	}
+
+	if len(out) != len(want) {
+		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
+		}
+	}
+}
