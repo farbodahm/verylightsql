@@ -92,7 +92,7 @@ func main() {
 
 		stmt, err := prepare_statement(input)
 		if err != nil {
-			fmt.Printf("here %s\n", err)
+			fmt.Printf("%s.\n", err)
 			continue
 		}
 

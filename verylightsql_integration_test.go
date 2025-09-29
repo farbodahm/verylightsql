@@ -155,3 +155,63 @@ func Test_TableFullError(t *testing.T) {
 		t.Fatalf("expected table full error, but did not find it in output:\n%s", full)
 	}
 }
+
+func Test_ErrorOnTooLongStrings(t *testing.T) {
+	longUsername := strings.Repeat("a", 33) // 1 over the limit
+	longEmail := strings.Repeat("a", 256)   // 1 over the limit
+	script := []string{
+		fmt.Sprintf("insert 1 %s %s", longUsername, longEmail),
+		"select",
+		".exit",
+	}
+
+	out, full, code := runScript(t, script)
+	if code != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+	}
+
+	want := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"> string is too long.",
+		"> Executed.",
+		"> Bye!",
+	}
+
+	if len(out) != len(want) {
+		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
+		}
+	}
+}
+
+func Test_ErrorOnNegativeID(t *testing.T) {
+	script := []string{
+		"insert -1 cstack foo@bar.com",
+		"select",
+		".exit",
+	}
+
+	out, full, code := runScript(t, script)
+	if code != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+	}
+
+	want := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"> ID must be positive.",
+		"> Executed.",
+		"> Bye!",
+	}
+
+	if len(out) != len(want) {
+		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
+		}
+	}
+}
