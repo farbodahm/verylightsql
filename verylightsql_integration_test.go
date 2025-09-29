@@ -93,3 +93,65 @@ func Test_InsertsAndRetrievesRow(t *testing.T) {
 		}
 	}
 }
+
+func Test_InsertMaxLengthStrings(t *testing.T) {
+	longUsername := strings.Repeat("a", 32)
+	longEmail := strings.Repeat("a", 255)
+	script := []string{
+		fmt.Sprintf("insert 1 %s %s", longUsername, longEmail),
+		"select",
+		".exit",
+	}
+
+	out, full, code := runScript(t, script)
+	if code != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+	}
+
+	want := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"> Executed.",
+		fmt.Sprintf("> (1, %s, %s)", longUsername, longEmail),
+		"Executed.",
+		"> Bye!",
+	}
+
+	if len(out) != len(want) {
+		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
+		}
+	}
+}
+
+func Test_TableFullError(t *testing.T) {
+	// Table max rows is 4096 (pageSize=4096, rowSize=292, rowsPerPage=14, tableMaxPages=100, tableMaxRows=1400)
+	// So we try to insert 1401 rows to trigger the error
+	script := make([]string, 0, 1402)
+	for i := 1; i <= 1401; i++ {
+		script = append(script, fmt.Sprintf("insert %d user%d person%d@example.com", i, i, i))
+	}
+	script = append(script, ".exit")
+
+	out, full, code := runScript(t, script)
+	if code != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+	}
+
+	// The error should be printed before the last prompt and exit
+	if len(out) < 2 {
+		t.Fatalf("output too short:\n%q", out)
+	}
+	found := false
+	for _, line := range out {
+		if strings.Contains(strings.ToLower(line), "table is full") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected table full error, but did not find it in output:\n%s", full)
+	}
+}
