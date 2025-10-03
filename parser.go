@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+var errParseStringTooLong = errors.New("string is too long")
+var errParseNegativeID = errors.New("ID must be positive")
 
 // StatementType represents the type of SQL statement
 type StatementType int
@@ -39,6 +43,16 @@ func parse_insert_string_to_row(input string) (Row, error) {
 	_, err := fmt.Sscanf(input, "insert %d %s %s", &row.ID, &username, &email)
 	if err != nil {
 		return row, fmt.Errorf("syntax error: could not parse row: %w", err)
+	}
+
+	if len(username) > ColumnUsernameSize {
+		return row, errParseStringTooLong
+	}
+	if len(email) > ColumnEmailSize {
+		return row, errParseStringTooLong
+	}
+	if row.ID < 0 {
+		return row, errParseNegativeID
 	}
 
 	// TODO: Handle overflow
