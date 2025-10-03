@@ -4,17 +4,25 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/alecthomas/kong"
 )
 
 const (
 	VERSION = "0.1.0"
 )
 
-func execute_meta_command(input string) error {
+var CLI struct {
+	DBPath  string `arg:"" name:"database_file" help:"Path to the database file." default:"vlsql.db"`
+	Version bool   `help:"Print version and exit." short:"v"`
+}
+
+func execute_meta_command(input string, t *Table) error {
 	switch input {
 	case ".exit":
 		fmt.Print("Bye!\n")
-		// TODO: What is the best way to exit?
+		t.Close()
 		os.Exit(0)
 	case ".help":
 		fmt.Print("Available commands: help, exit\n")
@@ -69,22 +77,48 @@ func execute_statement(stmt Statement, table *Table) error {
 }
 
 func main() {
+	ctx := kong.Parse(&CLI,
+		kong.Name("verylightsql"),
+		kong.Description("A tiny SQL-like REPL."),
+		kong.Vars{"version": VERSION},
+	)
+
+	if CLI.Version {
+		fmt.Printf("Verylightsql v%s\n", VERSION)
+		ctx.Exit(0)
+	}
+
 	fmt.Printf("Verylightsql v%s\n", VERSION)
-	table := NewTable()
+	fmt.Printf("Opening database: %s\n", CLI.DBPath)
+
+	table, err := OpenDatabase(CLI.DBPath)
+	if err != nil {
+		fmt.Printf("Error opening database file: %s\n", err)
+		os.Exit(1)
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
 		fmt.Print("> ")
 
 		input, err := reader.ReadString('\n')
-		input = input[:len(input)-1] // remove newline
 		if err != nil {
-			panic(err)
+			fmt.Println("Error reading input:", err)
+			continue
+		}
+
+		// Trim both \n and potential \r\n on Windows
+		input = strings.TrimSuffix(input, "\n")
+		input = strings.TrimSuffix(input, "\r")
+
+		// Ignore empty lines safely (prevents out-of-range on input[0])
+		if len(strings.TrimSpace(input)) == 0 {
+			continue
 		}
 
 		if input[0] == '.' {
-			err := execute_meta_command(input)
-			if err != nil {
+			if err := execute_meta_command(input, table); err != nil {
 				fmt.Printf("%s\n", err)
 			}
 			continue
@@ -96,8 +130,7 @@ func main() {
 			continue
 		}
 
-		err = execute_statement(stmt, table)
-		if err != nil {
+		if err := execute_statement(stmt, table); err != nil {
 			fmt.Printf("%s\n", err)
 			continue
 		}
