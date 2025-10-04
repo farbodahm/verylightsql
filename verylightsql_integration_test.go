@@ -10,25 +10,37 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 const (
-	verylightsqlBinary     = "./verylightsql"
 	verylightsqlVersion    = "0.1.0"
 	integrationTestTimeout = 3 * time.Second
-	dbPath                 = "./vlsql.db"
 )
 
-func runScript(t *testing.T, commands []string) (lines []string, all string, code int) {
+var verylightsqlBinary string
+
+func init() {
+	// Make the binary path absolute so we can run it from temp dirs.
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	verylightsqlBinary = filepath.Join(cwd, "verylightsql")
+}
+
+func runScript(t *testing.T, workdir string, commands []string) (lines []string, all string, code int) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), integrationTestTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, verylightsqlBinary)
+	cmd.Dir = workdir
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("stdin: %v", err)
@@ -69,7 +81,9 @@ func runScript(t *testing.T, commands []string) (lines []string, all string, cod
 }
 
 func Test_InsertsAndRetrievesRow(t *testing.T) {
-	out, full, code := runScript(t, []string{
+	dir := t.TempDir()
+
+	out, full, code := runScript(t, dir, []string{
 		"insert 1 user1 person1@example.com",
 		"select",
 		".exit",
@@ -98,12 +112,9 @@ func Test_InsertsAndRetrievesRow(t *testing.T) {
 }
 
 func Test_PersistsDataAfterClose(t *testing.T) {
-	_ = os.Remove(dbPath)
-	t.Cleanup(func() {
-		_ = os.Remove(dbPath)
-	})
+	dir := t.TempDir()
 
-	out1, full1, code1 := runScript(t, []string{
+	out1, full1, code1 := runScript(t, dir, []string{
 		"insert 1 user1 person1@example.com",
 		".exit",
 	})
@@ -127,7 +138,7 @@ func Test_PersistsDataAfterClose(t *testing.T) {
 		}
 	}
 
-	out2, full2, code2 := runScript(t, []string{
+	out2, full2, code2 := runScript(t, dir, []string{
 		"select",
 		".exit",
 	})
@@ -154,6 +165,8 @@ func Test_PersistsDataAfterClose(t *testing.T) {
 }
 
 func Test_InsertMaxLengthStrings(t *testing.T) {
+	dir := t.TempDir()
+
 	longUsername := strings.Repeat("a", 32)
 	longEmail := strings.Repeat("a", 255)
 	script := []string{
@@ -162,7 +175,7 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 		".exit",
 	}
 
-	out, full, code := runScript(t, script)
+	out, full, code := runScript(t, dir, script)
 	if code != 0 {
 		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}
@@ -187,6 +200,8 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 }
 
 func Test_TableFullError(t *testing.T) {
+	dir := t.TempDir()
+
 	// Table max rows is 4096 (pageSize=4096, rowSize=292, rowsPerPage=14, tableMaxPages=100, tableMaxRows=1400)
 	// So we try to insert 1401 rows to trigger the error
 	script := make([]string, 0, 1402)
@@ -195,7 +210,7 @@ func Test_TableFullError(t *testing.T) {
 	}
 	script = append(script, ".exit")
 
-	out, full, code := runScript(t, script)
+	out, full, code := runScript(t, dir, script)
 	if code != 0 {
 		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}
@@ -217,6 +232,8 @@ func Test_TableFullError(t *testing.T) {
 }
 
 func Test_ErrorOnTooLongStrings(t *testing.T) {
+	dir := t.TempDir()
+
 	longUsername := strings.Repeat("a", 33) // 1 over the limit
 	longEmail := strings.Repeat("a", 256)   // 1 over the limit
 	script := []string{
@@ -225,7 +242,7 @@ func Test_ErrorOnTooLongStrings(t *testing.T) {
 		".exit",
 	}
 
-	out, full, code := runScript(t, script)
+	out, full, code := runScript(t, dir, script)
 	if code != 0 {
 		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}
@@ -249,13 +266,15 @@ func Test_ErrorOnTooLongStrings(t *testing.T) {
 }
 
 func Test_ErrorOnNegativeID(t *testing.T) {
+	dir := t.TempDir()
+
 	script := []string{
 		"insert -1 cstack foo@bar.com",
 		"select",
 		".exit",
 	}
 
-	out, full, code := runScript(t, script)
+	out, full, code := runScript(t, dir, script)
 	if code != 0 {
 		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}

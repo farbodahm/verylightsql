@@ -62,8 +62,13 @@ func (p *Pager) getPage(pageNum uint32) ([]byte, error) {
 				}
 			}
 		}
-		// TODO: Still can be empty
 
+		if p.pages[pageNum] == nil {
+			// We still have to allocate a fresh page here because there may be no
+			// persisted data for this page yet (e.g. when appending new rows past the
+			// current file length), so the caller always receives a writable buffer.
+			p.pages[pageNum] = make([]byte, pageSize)
+		}
 	}
 
 	return p.pages[pageNum], nil
