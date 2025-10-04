@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ const (
 	verylightsqlBinary     = "./verylightsql"
 	verylightsqlVersion    = "0.1.0"
 	integrationTestTimeout = 3 * time.Second
+	dbPath                 = "./vlsql.db"
 )
 
 func runScript(t *testing.T, commands []string) (lines []string, all string, code int) {
@@ -61,7 +63,7 @@ func runScript(t *testing.T, commands []string) (lines []string, all string, cod
 	if ps := cmd.ProcessState; ps != nil {
 		code = ps.ExitCode()
 	} else {
-		code = -1 // timed out / killed
+		code = -1
 	}
 	return
 }
@@ -78,6 +80,7 @@ func Test_InsertsAndRetrievesRow(t *testing.T) {
 
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> Executed.",
 		"> (1, user1, person1@example.com)",
 		"Executed.",
@@ -90,6 +93,62 @@ func Test_InsertsAndRetrievesRow(t *testing.T) {
 	for i := range want {
 		if out[i] != want[i] {
 			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
+		}
+	}
+}
+
+func Test_PersistsDataAfterClose(t *testing.T) {
+	_ = os.Remove(dbPath)
+	t.Cleanup(func() {
+		_ = os.Remove(dbPath)
+	})
+
+	out1, full1, code1 := runScript(t, []string{
+		"insert 1 user1 person1@example.com",
+		".exit",
+	})
+	if code1 != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code1, full1)
+	}
+
+	want1 := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
+		"> Executed.",
+		"> Bye!",
+	}
+
+	if len(out1) != len(want1) {
+		t.Fatalf("line count mismatch after first run\nout:\n%q\nwant:\n%q", out1, want1)
+	}
+	for i := range want1 {
+		if out1[i] != want1[i] {
+			t.Fatalf("first run line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out1[i], want1[i], full1)
+		}
+	}
+
+	out2, full2, code2 := runScript(t, []string{
+		"select",
+		".exit",
+	})
+	if code2 != 0 {
+		t.Fatalf("unexpected exit code %d; output:\n%s", code2, full2)
+	}
+
+	want2 := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
+		"> (1, user1, person1@example.com)",
+		"Executed.",
+		"> Bye!",
+	}
+
+	if len(out2) != len(want2) {
+		t.Fatalf("line count mismatch after reopen\nout:\n%q\nwant:\n%q", out2, want2)
+	}
+	for i := range want2 {
+		if out2[i] != want2[i] {
+			t.Fatalf("second run line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out2[i], want2[i], full2)
 		}
 	}
 }
@@ -110,6 +169,7 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> Executed.",
 		fmt.Sprintf("> (1, %s, %s)", longUsername, longEmail),
 		"Executed.",
@@ -172,6 +232,7 @@ func Test_ErrorOnTooLongStrings(t *testing.T) {
 
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> string is too long.",
 		"> Executed.",
 		"> Bye!",
@@ -201,6 +262,7 @@ func Test_ErrorOnNegativeID(t *testing.T) {
 
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> ID must be positive.",
 		"> Executed.",
 		"> Bye!",

@@ -7,6 +7,9 @@
 *.dll
 *.so
 *.dylib
+verylightsql
+vlsql.db
+verylightsql.db
 
 # Test binary, built with `go test -c`
 *.test
