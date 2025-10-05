@@ -8,25 +8,42 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 const (
-	verylightsqlBinary     = "./verylightsql"
 	verylightsqlVersion    = "0.1.0"
 	integrationTestTimeout = 3 * time.Second
+	verylightsqlBinaryName = "verylightsql"
 )
 
-func runScript(t *testing.T, commands []string) (lines []string, all string, code int) {
+var verylightsqlBinary string
+
+func init() {
+	// Make the binary path absolute so we can run it from temp dirs.
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	verylightsqlBinary = filepath.Join(cwd, verylightsqlBinaryName)
+}
+
+func runScript(t *testing.T, workdir string, commands []string) (lines []string, all string, code int) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), integrationTestTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, verylightsqlBinary)
+	cmd.Dir = workdir
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("stdin: %v", err)
@@ -61,72 +78,102 @@ func runScript(t *testing.T, commands []string) (lines []string, all string, cod
 	if ps := cmd.ProcessState; ps != nil {
 		code = ps.ExitCode()
 	} else {
-		code = -1 // timed out / killed
+		code = -1
 	}
 	return
 }
 
-func Test_InsertsAndRetrievesRow(t *testing.T) {
-	out, full, code := runScript(t, []string{
-		"insert 1 user1 person1@example.com",
-		"select",
-		".exit",
-	})
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+// assertLinesCmp compares got vs want using go-cmp and includes the full transcript on failure.
+func assertLinesCmp(t *testing.T, got, want []string, full string) {
+	t.Helper()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("output mismatch (-want +got):\n%s\nfull out:\n%s", diff, full)
 	}
+}
+
+// mustRunAndAssert runs the script, asserts exit code 0, and compares lines via assertLinesCmp.
+func mustRunAndAssert(t *testing.T, dir string, script, want []string) {
+	t.Helper()
+	out, full, code := runScript(t, dir, script)
+	if code != 0 {
+		t.Fatalf("%s: unexpected exit code %d; output:\n%s", t.Name(), code, full)
+	}
+	assertLinesCmp(t, out, want, full)
+}
+
+func Test_InsertsAndRetrievesRow(t *testing.T) {
+	dir := t.TempDir()
 
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> Executed.",
 		"> (1, user1, person1@example.com)",
 		"Executed.",
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
+	mustRunAndAssert(t, dir, []string{
+		"insert 1 user1 person1@example.com",
+		"select",
+		".exit",
+	}, want)
+}
+
+func Test_PersistsDataAfterClose(t *testing.T) {
+	dir := t.TempDir()
+
+	want1 := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
+		"> Executed.",
+		"> Bye!",
 	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
+	mustRunAndAssert(t, dir, []string{
+		"insert 1 user1 person1@example.com",
+		".exit",
+	}, want1)
+
+	want2 := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
+		"> (1, user1, person1@example.com)",
+		"Executed.",
+		"> Bye!",
 	}
+	mustRunAndAssert(t, dir, []string{
+		"select",
+		".exit",
+	}, want2)
 }
 
 func Test_InsertMaxLengthStrings(t *testing.T) {
+	dir := t.TempDir()
+
 	longUsername := strings.Repeat("a", 32)
 	longEmail := strings.Repeat("a", 255)
+
 	script := []string{
 		fmt.Sprintf("insert 1 %s %s", longUsername, longEmail),
 		"select",
 		".exit",
 	}
 
-	out, full, code := runScript(t, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
-	}
-
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> Executed.",
 		fmt.Sprintf("> (1, %s, %s)", longUsername, longEmail),
 		"Executed.",
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, script, want)
 }
 
 func Test_TableFullError(t *testing.T) {
+	dir := t.TempDir()
+
 	// Table max rows is 4096 (pageSize=4096, rowSize=292, rowsPerPage=14, tableMaxPages=100, tableMaxRows=1400)
 	// So we try to insert 1401 rows to trigger the error
 	script := make([]string, 0, 1402)
@@ -135,7 +182,7 @@ func Test_TableFullError(t *testing.T) {
 	}
 	script = append(script, ".exit")
 
-	out, full, code := runScript(t, script)
+	out, full, code := runScript(t, dir, script)
 	if code != 0 {
 		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}
@@ -157,61 +204,44 @@ func Test_TableFullError(t *testing.T) {
 }
 
 func Test_ErrorOnTooLongStrings(t *testing.T) {
+	dir := t.TempDir()
+
 	longUsername := strings.Repeat("a", 33) // 1 over the limit
 	longEmail := strings.Repeat("a", 256)   // 1 over the limit
+
 	script := []string{
 		fmt.Sprintf("insert 1 %s %s", longUsername, longEmail),
 		"select",
 		".exit",
 	}
 
-	out, full, code := runScript(t, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
-	}
-
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> string is too long.",
 		"> Executed.",
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, script, want)
 }
 
 func Test_ErrorOnNegativeID(t *testing.T) {
+	dir := t.TempDir()
+
 	script := []string{
 		"insert -1 cstack foo@bar.com",
 		"select",
 		".exit",
 	}
 
-	out, full, code := runScript(t, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
-	}
-
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		"Opening database: vlsql.db",
 		"> ID must be positive.",
 		"> Executed.",
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, script, want)
 }
