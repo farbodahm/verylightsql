@@ -14,11 +14,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 const (
 	verylightsqlVersion    = "0.1.0"
 	integrationTestTimeout = 3 * time.Second
+	verylightsqlBinaryName = "verylightsql"
 )
 
 var verylightsqlBinary string
@@ -29,7 +32,7 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	verylightsqlBinary = filepath.Join(cwd, "verylightsql")
+	verylightsqlBinary = filepath.Join(cwd, verylightsqlBinaryName)
 }
 
 func runScript(t *testing.T, workdir string, commands []string) (lines []string, all string, code int) {
@@ -80,17 +83,26 @@ func runScript(t *testing.T, workdir string, commands []string) (lines []string,
 	return
 }
 
+// assertLinesCmp compares got vs want using go-cmp and includes the full transcript on failure.
+func assertLinesCmp(t *testing.T, got, want []string, full string) {
+	t.Helper()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("output mismatch (-want +got):\n%s\nfull out:\n%s", diff, full)
+	}
+}
+
+// mustRunAndAssert runs the script, asserts exit code 0, and compares lines via assertLinesCmp.
+func mustRunAndAssert(t *testing.T, dir string, script, want []string) {
+	t.Helper()
+	out, full, code := runScript(t, dir, script)
+	if code != 0 {
+		t.Fatalf("%s: unexpected exit code %d; output:\n%s", t.Name(), code, full)
+	}
+	assertLinesCmp(t, out, want, full)
+}
+
 func Test_InsertsAndRetrievesRow(t *testing.T) {
 	dir := t.TempDir()
-
-	out, full, code := runScript(t, dir, []string{
-		"insert 1 user1 person1@example.com",
-		"select",
-		".exit",
-	})
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
-	}
 
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
@@ -101,26 +113,15 @@ func Test_InsertsAndRetrievesRow(t *testing.T) {
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, []string{
+		"insert 1 user1 person1@example.com",
+		"select",
+		".exit",
+	}, want)
 }
 
 func Test_PersistsDataAfterClose(t *testing.T) {
 	dir := t.TempDir()
-
-	out1, full1, code1 := runScript(t, dir, []string{
-		"insert 1 user1 person1@example.com",
-		".exit",
-	})
-	if code1 != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code1, full1)
-	}
 
 	want1 := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
@@ -128,23 +129,10 @@ func Test_PersistsDataAfterClose(t *testing.T) {
 		"> Executed.",
 		"> Bye!",
 	}
-
-	if len(out1) != len(want1) {
-		t.Fatalf("line count mismatch after first run\nout:\n%q\nwant:\n%q", out1, want1)
-	}
-	for i := range want1 {
-		if out1[i] != want1[i] {
-			t.Fatalf("first run line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out1[i], want1[i], full1)
-		}
-	}
-
-	out2, full2, code2 := runScript(t, dir, []string{
-		"select",
+	mustRunAndAssert(t, dir, []string{
+		"insert 1 user1 person1@example.com",
 		".exit",
-	})
-	if code2 != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code2, full2)
-	}
+	}, want1)
 
 	want2 := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
@@ -153,15 +141,10 @@ func Test_PersistsDataAfterClose(t *testing.T) {
 		"Executed.",
 		"> Bye!",
 	}
-
-	if len(out2) != len(want2) {
-		t.Fatalf("line count mismatch after reopen\nout:\n%q\nwant:\n%q", out2, want2)
-	}
-	for i := range want2 {
-		if out2[i] != want2[i] {
-			t.Fatalf("second run line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out2[i], want2[i], full2)
-		}
-	}
+	mustRunAndAssert(t, dir, []string{
+		"select",
+		".exit",
+	}, want2)
 }
 
 func Test_InsertMaxLengthStrings(t *testing.T) {
@@ -169,15 +152,11 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 
 	longUsername := strings.Repeat("a", 32)
 	longEmail := strings.Repeat("a", 255)
+
 	script := []string{
 		fmt.Sprintf("insert 1 %s %s", longUsername, longEmail),
 		"select",
 		".exit",
-	}
-
-	out, full, code := runScript(t, dir, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}
 
 	want := []string{
@@ -189,14 +168,7 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, script, want)
 }
 
 func Test_TableFullError(t *testing.T) {
@@ -236,15 +208,11 @@ func Test_ErrorOnTooLongStrings(t *testing.T) {
 
 	longUsername := strings.Repeat("a", 33) // 1 over the limit
 	longEmail := strings.Repeat("a", 256)   // 1 over the limit
+
 	script := []string{
 		fmt.Sprintf("insert 1 %s %s", longUsername, longEmail),
 		"select",
 		".exit",
-	}
-
-	out, full, code := runScript(t, dir, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
 	}
 
 	want := []string{
@@ -255,14 +223,7 @@ func Test_ErrorOnTooLongStrings(t *testing.T) {
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, script, want)
 }
 
 func Test_ErrorOnNegativeID(t *testing.T) {
@@ -274,11 +235,6 @@ func Test_ErrorOnNegativeID(t *testing.T) {
 		".exit",
 	}
 
-	out, full, code := runScript(t, dir, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
-	}
-
 	want := []string{
 		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
 		"Opening database: vlsql.db",
@@ -287,12 +243,5 @@ func Test_ErrorOnNegativeID(t *testing.T) {
 		"> Bye!",
 	}
 
-	if len(out) != len(want) {
-		t.Fatalf("line count mismatch\nout:\n%q\nwant:\n%q", out, want)
-	}
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("line %d mismatch\n got: %q\nwant: %q\nfull out:\n%s", i, out[i], want[i], full)
-		}
-	}
+	mustRunAndAssert(t, dir, script, want)
 }
