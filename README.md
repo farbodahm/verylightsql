@@ -109,6 +109,7 @@ The project includes a Makefile with the following targets:
 - `make run` - Build and run the application
 - `make test` - Build and run all integration tests
 - `make test-specific TEST=TestName` - Build and run a specific test
+- `make db-init [NUM_RECORDS=100]` - Build and initialize database with NUM_RECORDS sample records
 - `make clean` - Remove build artifacts
 
 ## Motivation
