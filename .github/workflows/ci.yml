@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/*, bug/*, refactor/*]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   fmt:
