@@ -13,6 +13,14 @@ It follows along with the guides at https://cstack.github.io/db_tutorial/ and ht
 
 ## Build
 
+### Using Make (recommended)
+
+```sh
+make build
+```
+
+### Using Go directly
+
 ```sh
 go build -o verylightsql
 ```
@@ -21,7 +29,13 @@ This produces a standalone binary (`verylightsql`) in the current directory.
 
 ## Run
 
-Execute the compiled binary:
+### Using Make (builds first)
+
+```sh
+make run
+```
+
+### Execute the compiled binary directly
 
 ```sh
 ./verylightsql vlsql.db
@@ -51,13 +65,51 @@ Rows are serialized to fixed-size pages on disk, so data persists between runs.
 
 ## Tests
 
-Run all tests with:
+### Using Make (recommended)
+
+Run all integration tests (builds first):
+
+```sh
+make test
+```
+
+Run a specific test:
+
+```sh
+make test-specific TEST=TestName
+```
+
+For example:
+
+```sh
+make test-specific TEST=TestDBPersists
+```
+
+### Using Go directly
+
+Run all tests:
 
 ```sh
 go test -v -tags=integration ./...
 ```
 
+Run a specific test:
+
+```sh
+go test -timeout 30s -run ^TestName$ github.com/farbodahm/verylightsql -tags=integration
+```
+
 The integration test exercises inserting/selecting rows through the REPL in-process to catch regression bugs.
+
+## Make Targets
+
+The project includes a Makefile with the following targets:
+
+- `make build` - Build the binary
+- `make run` - Build and run the application
+- `make test` - Build and run all integration tests
+- `make test-specific TEST=TestName` - Build and run a specific test
+- `make clean` - Remove build artifacts
 
 ## Motivation
 
