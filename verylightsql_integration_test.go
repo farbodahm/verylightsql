@@ -22,6 +22,7 @@ const (
 	verylightsqlVersion    = "0.1.0"
 	integrationTestTimeout = 3 * time.Second
 	verylightsqlBinaryName = "verylightsql"
+	verylightsqlDBName     = "vlsql-test.db"
 )
 
 var verylightsqlBinary string
@@ -35,13 +36,14 @@ func init() {
 	verylightsqlBinary = filepath.Join(cwd, verylightsqlBinaryName)
 }
 
+// runScript runs the verylightsql binary in the specified working directory with the provided commands as input.
 func runScript(t *testing.T, workdir string, commands []string) (lines []string, all string, code int) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), integrationTestTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, verylightsqlBinary)
+	cmd := exec.CommandContext(ctx, verylightsqlBinary, verylightsqlDBName)
 	cmd.Dir = workdir
 
 	stdin, err := cmd.StdinPipe()
@@ -101,17 +103,24 @@ func mustRunAndAssert(t *testing.T, dir string, script, want []string) {
 	assertLinesCmp(t, out, want, full)
 }
 
+// wantWithHeader prepends the common header to test-specific expected lines.
+func wantWithHeader(lines ...string) []string {
+	headerLines := []string{
+		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
+		fmt.Sprintf("Opening database: %s", verylightsqlDBName),
+	}
+	return append(headerLines, lines...)
+}
+
 func Test_InsertsAndRetrievesRow(t *testing.T) {
 	dir := t.TempDir()
 
-	want := []string{
-		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
-		"Opening database: vlsql.db",
+	want := wantWithHeader(
 		"> Executed.",
 		"> (1, user1, person1@example.com)",
 		"Executed.",
 		"> Bye!",
-	}
+	)
 
 	mustRunAndAssert(t, dir, []string{
 		"insert 1 user1 person1@example.com",
@@ -123,24 +132,20 @@ func Test_InsertsAndRetrievesRow(t *testing.T) {
 func Test_PersistsDataAfterClose(t *testing.T) {
 	dir := t.TempDir()
 
-	want1 := []string{
-		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
-		"Opening database: vlsql.db",
+	want1 := wantWithHeader(
 		"> Executed.",
 		"> Bye!",
-	}
+	)
 	mustRunAndAssert(t, dir, []string{
 		"insert 1 user1 person1@example.com",
 		".exit",
 	}, want1)
 
-	want2 := []string{
-		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
-		"Opening database: vlsql.db",
+	want2 := wantWithHeader(
 		"> (1, user1, person1@example.com)",
 		"Executed.",
 		"> Bye!",
-	}
+	)
 	mustRunAndAssert(t, dir, []string{
 		"select",
 		".exit",
@@ -159,14 +164,12 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 		".exit",
 	}
 
-	want := []string{
-		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
-		"Opening database: vlsql.db",
+	want := wantWithHeader(
 		"> Executed.",
 		fmt.Sprintf("> (1, %s, %s)", longUsername, longEmail),
 		"Executed.",
 		"> Bye!",
-	}
+	)
 
 	mustRunAndAssert(t, dir, script, want)
 }
@@ -215,13 +218,11 @@ func Test_ErrorOnTooLongStrings(t *testing.T) {
 		".exit",
 	}
 
-	want := []string{
-		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
-		"Opening database: vlsql.db",
+	want := wantWithHeader(
 		"> string is too long.",
 		"> Executed.",
 		"> Bye!",
-	}
+	)
 
 	mustRunAndAssert(t, dir, script, want)
 }
@@ -235,13 +236,11 @@ func Test_ErrorOnNegativeID(t *testing.T) {
 		".exit",
 	}
 
-	want := []string{
-		fmt.Sprintf("Verylightsql v%s", verylightsqlVersion),
-		"Opening database: vlsql.db",
+	want := wantWithHeader(
 		"> ID must be positive.",
 		"> Executed.",
 		"> Bye!",
-	}
+	)
 
 	mustRunAndAssert(t, dir, script, want)
 }
