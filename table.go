@@ -124,19 +124,6 @@ func OpenDatabase(filename string) (*Table, error) {
 	return table, nil
 }
 
-// rowSlot returns a pointer to the memory location where a row should be stored
-func (t *Table) rowSlot(rowNum uint32) []byte {
-	pageNum := rowNum / rowsPerPage
-
-	page, err := t.pager.getPage(pageNum)
-	if err != nil {
-		panic(err) // TODO: In production code, handle this error properly
-	}
-	rowOffset := rowNum % rowsPerPage
-	byteOffset := int(rowOffset) * rowSize
-	return page[byteOffset : byteOffset+rowSize]
-}
-
 // serializeRow converts a Row struct to bytes and stores it in the destination
 func serializeRow(row *Row, dest []byte) {
 	binary.LittleEndian.PutUint32(dest[idOffset:], uint32(row.ID))
@@ -157,8 +144,8 @@ func (t *Table) Insert(row *Row) error {
 		return ErrTableFull
 	}
 
-	slot := t.rowSlot(t.numRows)
-	serializeRow(row, slot)
+	cursor := TableEnd(t) // TODO: optimize by avoiding to create a new cursor each time
+	serializeRow(row, cursor.Value())
 	t.numRows++
 
 	return nil
@@ -167,10 +154,11 @@ func (t *Table) Insert(row *Row) error {
 // SelectAll returns all rows in the table
 func (t *Table) SelectAll() []Row {
 	rows := make([]Row, t.numRows)
+	cursor := TableStart(t)
 
-	for i := uint32(0); i < t.numRows; i++ {
-		slot := t.rowSlot(i)
-		deserializeRow(slot, &rows[i])
+	for !cursor.IsEndOfTable() {
+		deserializeRow(cursor.Value(), &rows[cursor.RowNum()])
+		cursor.Advance()
 	}
 
 	return rows
