@@ -2,7 +2,7 @@ package main
 
 import "unsafe"
 
-// TODO: Use proper go structs with
+// TODO: Use proper go structs with serialization instead of byte arrays and unsafe
 
 // NodeType represents the type of a B-tree node.
 // It can be either an internal node or a leaf node.

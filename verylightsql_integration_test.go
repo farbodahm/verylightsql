@@ -244,3 +244,56 @@ func Test_ErrorOnNegativeID(t *testing.T) {
 
 	mustRunAndAssert(t, dir, script, want)
 }
+
+func Test_PrintConstantsMetaCommand(t *testing.T) {
+	dir := t.TempDir()
+
+	want := wantWithHeader(
+		"> ROW_SIZE: 291",
+		"COMMON_NODE_HEADER_SIZE: 6",
+		"LEAF_NODE_HEADER_SIZE: 10",
+		"LEAF_NODE_CELL_SIZE: 295",
+		"LEAF_NODE_SPACE_FOR_CELLS: 4086",
+		"LEAF_NODE_MAX_CELLS: 13",
+		"> Bye!",
+	)
+
+	mustRunAndAssert(t, dir, []string{
+		".constants",
+		".exit",
+	}, want)
+}
+
+func Test_PrintBtreeMetaCommandOnEmptyTable(t *testing.T) {
+	dir := t.TempDir()
+
+	want := wantWithHeader(
+		"> leaf (size 0)",
+		"> Bye!",
+	)
+
+	mustRunAndAssert(t, dir, []string{
+		".btree",
+		".exit",
+	}, want)
+}
+
+func Test_PrintBtreeMetaCommandWithRows(t *testing.T) {
+	dir := t.TempDir()
+
+	want := wantWithHeader(
+		"> Executed.",
+		"> Executed.",
+		"> leaf (size 2)",
+		"  - 0 : 1",
+		"  - 1 : 2",
+		"> Bye!",
+	)
+
+	mustRunAndAssert(t, dir, []string{
+		"insert 1 user1 person1@example.com",
+		"insert 2 user2 person2@example.com",
+		".btree",
+		".exit",
+	}, want)
+}
