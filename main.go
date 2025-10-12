@@ -26,10 +26,36 @@ func execute_meta_command(input string, t *Table) error {
 		os.Exit(0)
 	case ".help":
 		fmt.Print("Available commands: help, exit\n")
+	case ".constants":
+		printConstants()
+	case ".btree":
+		page, err := t.pager.getPage(t.rootPageNum)
+		if err != nil {
+			return err
+		}
+		printLeafNode(page)
 	default:
 		return fmt.Errorf("unrecognized command: %s", input)
 	}
 	return nil
+}
+
+func printConstants() {
+	fmt.Printf("ROW_SIZE: %d\n", rowSize)
+	fmt.Printf("COMMON_NODE_HEADER_SIZE: %d\n", CommonHeaderSize)
+	fmt.Printf("LEAF_NODE_HEADER_SIZE: %d\n", LeafNodeHeaderSize)
+	fmt.Printf("LEAF_NODE_CELL_SIZE: %d\n", LeafNodeCellSize)
+	fmt.Printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LeafNodeSpaceForCells)
+	fmt.Printf("LEAF_NODE_MAX_CELLS: %d\n", LeafNodeMaxCells)
+}
+
+func printLeafNode(node []byte) {
+	numCells := *leafNodeNumCells(node)
+	fmt.Printf("leaf (size %d)\n", numCells)
+	for i := uint32(0); i < numCells; i++ {
+		key := *leafNodeKey(node, i)
+		fmt.Printf("  - %d : %d\n", i, key)
+	}
 }
 
 func executeInsert(stmt Statement, table *Table) error {

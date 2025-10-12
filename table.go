@@ -19,18 +19,18 @@ const (
 
 	pageSize      = 4096
 	tableMaxPages = 100
-	rowsPerPage   = uint32(pageSize / rowSize)
-	tableMaxRows  = uint32(rowsPerPage * tableMaxPages)
 )
 
 var ErrTableFull = errors.New("table is full")
 var ErrFlushEmptyPage = errors.New("attempt to flush empty page")
+var ErrLeafSplittingNotImplemented = errors.New("leaf node splitting not implemented")
 
 // Pager manages the paged file storage
 type Pager struct {
 	fileLength int64
 	file       *os.File
 	pages      [tableMaxPages][]byte
+	numPages   uint32
 }
 
 // getPage retrieves a page from the pager, loading it from disk if necessary.
@@ -69,18 +69,24 @@ func (p *Pager) getPage(pageNum uint32) ([]byte, error) {
 			// current file length), so the caller always receives a writable buffer.
 			p.pages[pageNum] = make([]byte, pageSize)
 		}
+
+		// Update numPages if we just allocated a new page
+		if pageNum >= p.numPages {
+			p.numPages = pageNum + 1
+		}
 	}
 
 	return p.pages[pageNum], nil
 }
 
 // flush writes a page back to disk
-func (p *Pager) flush(pageNum uint32, size uint32) error {
+// Each Btree node is a page, so this function is used to persist Btree nodes
+func (p *Pager) flush(pageNum uint32) error {
 	if p.pages[pageNum] == nil {
 		return ErrFlushEmptyPage
 	}
 
-	_, err := p.file.WriteAt(p.pages[pageNum][:size], int64(pageNum)*pageSize)
+	_, err := p.file.WriteAt(p.pages[pageNum], int64(pageNum)*pageSize)
 	return err
 }
 
@@ -95,9 +101,15 @@ func openPager(filename string) (*Pager, error) {
 		return nil, err
 	}
 
+	fileSize := fileInfo.Size()
+	if fileSize%pageSize != 0 {
+		return nil, errors.New("db file is not a whole number of pages. Corrupt file?")
+	}
+
 	pager := &Pager{
-		fileLength: fileInfo.Size(),
+		fileLength: fileSize,
 		file:       file,
+		numPages:   uint32(fileSize / pageSize),
 	}
 
 	// TODO: Eager allocation of pages can be done here if needed
@@ -106,8 +118,8 @@ func openPager(filename string) (*Pager, error) {
 
 // Table represents a database table with paged storage
 type Table struct {
-	numRows uint32
-	pager   *Pager
+	rootPageNum uint32
+	pager       *Pager
 }
 
 func OpenDatabase(filename string) (*Table, error) {
@@ -117,8 +129,17 @@ func OpenDatabase(filename string) (*Table, error) {
 	}
 
 	table := &Table{
-		numRows: uint32(pager.fileLength / int64(rowSize)),
-		pager:   pager,
+		pager:       pager,
+		rootPageNum: 0,
+	}
+
+	if pager.numPages == 0 {
+		// New database file. Initialize page 0 as leaf node
+		rootNode, err := pager.getPage(0)
+		if err != nil {
+			return nil, err
+		}
+		initializeLeafNode(rootNode)
 	}
 
 	return table, nil
@@ -140,56 +161,43 @@ func deserializeRow(src []byte, row *Row) {
 
 // Insert adds a new row to the table
 func (t *Table) Insert(row *Row) error {
-	if t.numRows >= tableMaxRows {
-		return ErrTableFull
+	node, err := t.pager.getPage(t.rootPageNum)
+	if err != nil {
+		return err
+	}
+	if *leafNodeNumCells(node) >= uint32(LeafNodeMaxCells) {
+		return ErrTableFull // For simplicity, we don't handle splitting in this example
 	}
 
-	cursor := TableEnd(t) // TODO: optimize by avoiding to create a new cursor each time
-	serializeRow(row, cursor.Value())
-	t.numRows++
-
-	return nil
+	cursor := TableEnd(t) // TODO: optimize by avoiding to create a new cursor each time\
+	return cursor.InsertLeafNode(uint32(row.ID), row)
 }
 
 // SelectAll returns all rows in the table
 func (t *Table) SelectAll() []Row {
-	rows := make([]Row, t.numRows)
+	page, _ := t.pager.getPage(t.rootPageNum)
+	numOfCells := *leafNodeNumCells(page)
+	rows := make([]Row, numOfCells)
 	cursor := TableStart(t)
 
 	for !cursor.IsEndOfTable() {
-		deserializeRow(cursor.Value(), &rows[cursor.RowNum()])
+		deserializeRow(cursor.Value(), &rows[cursor.cellNum])
 		cursor.Advance()
 	}
 
 	return rows
 }
 
-// NumRows returns the current number of rows in the table
-func (t *Table) NumRows() uint32 {
-	return t.numRows
-}
-
 func (t *Table) Close() error {
 	p := t.pager
-	fullPagesNum := t.numRows / rowsPerPage
 
 	// Write all pages to disk
-	for pageNum := range fullPagesNum {
+	for pageNum := range t.pager.numPages {
 		if p.pages[pageNum] == nil {
 			continue
 		}
 
-		err := t.pager.flush(uint32(pageNum), pageSize)
-		if err != nil {
-			return err
-		}
-	}
-	// Write additional rows of last page if any exists
-	additionalRowsNum := t.numRows % rowsPerPage
-	if additionalRowsNum > 0 {
-		pageNum := fullPagesNum
-
-		err := t.pager.flush(pageNum, additionalRowsNum*uint32(rowSize))
+		err := t.pager.flush(uint32(pageNum))
 		if err != nil {
 			return err
 		}
