@@ -284,16 +284,35 @@ func Test_PrintBtreeMetaCommandWithRows(t *testing.T) {
 	want := wantWithHeader(
 		"> Executed.",
 		"> Executed.",
-		"> leaf (size 2)",
+		"> Executed.",
+		"> leaf (size 3)",
 		"  - 0 : 1",
 		"  - 1 : 2",
+		"  - 2 : 3",
+		"> Bye!",
+	)
+
+	mustRunAndAssert(t, dir, []string{
+		"insert 3 user3 person3@example.com",
+		"insert 1 user1 person1@example.com",
+		"insert 2 user2 person2@example.com",
+		".btree",
+		".exit",
+	}, want)
+}
+
+func Test_ErrorOnDuplicateIDs(t *testing.T) {
+	dir := t.TempDir()
+
+	want := wantWithHeader(
+		"> Executed.",
+		"> Error: duplicate key.",
 		"> Bye!",
 	)
 
 	mustRunAndAssert(t, dir, []string{
 		"insert 1 user1 person1@example.com",
-		"insert 2 user2 person2@example.com",
-		".btree",
+		"insert 1 newuser newemail",
 		".exit",
 	}, want)
 }

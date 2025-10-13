@@ -24,6 +24,7 @@ const (
 var ErrTableFull = errors.New("table is full")
 var ErrFlushEmptyPage = errors.New("attempt to flush empty page")
 var ErrLeafSplittingNotImplemented = errors.New("leaf node splitting not implemented")
+var ErrDuplicateKey = errors.New("duplicate key")
 
 // Pager manages the paged file storage
 type Pager struct {
@@ -159,17 +160,78 @@ func deserializeRow(src []byte, row *Row) {
 	copy(row.Email[:], src[emailOffset:emailOffset+emailSize])
 }
 
+// findKey finds the position of a key in the table and returns a cursor to it
+// if the key is not found, it returns a cursor to the position where it should be inserted
+func (t *Table) findKey(key uint32) *Cursor {
+	rootPage, err := t.pager.getPage(t.rootPageNum)
+	if err != nil {
+		panic(err) // In a real application, handle this error properly
+	}
+
+	if *nodeType(rootPage) == NodeTypeLeaf {
+		return t.findKeyInLeaf(t.rootPageNum, key)
+	}
+
+	// For simplicity, we only handle leaf nodes in this example
+	panic("Internal node search not implemented")
+}
+
+func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
+	node, err := t.pager.getPage(pageNum)
+	if err != nil {
+		panic(err) // In a real application, handle this error properly
+	}
+	numOfCells := *leafNodeNumCells(node)
+	c := &Cursor{
+		table:   t,
+		pageNum: pageNum,
+	}
+
+	// Binary search
+	i, j := uint32(0), numOfCells
+	for i != j {
+		mid := (i + j) / 2
+		midKey := *leafNodeKey(node, mid)
+		if key == midKey {
+			c.cellNum = mid
+			return c
+		}
+		if key < midKey {
+			j = mid
+		} else {
+			i = mid + 1
+		}
+	}
+
+	c.cellNum = i
+	return c
+}
+
 // Insert adds a new row to the table
 func (t *Table) Insert(row *Row) error {
-	node, err := t.pager.getPage(t.rootPageNum)
+	page, err := t.pager.getPage(t.rootPageNum)
 	if err != nil {
 		return err
 	}
-	if *leafNodeNumCells(node) >= uint32(LeafNodeMaxCells) {
+
+	numOfCells := *leafNodeNumCells(page)
+	if numOfCells >= uint32(LeafNodeMaxCells) {
 		return ErrTableFull // For simplicity, we don't handle splitting in this example
 	}
 
-	cursor := TableEnd(t) // TODO: optimize by avoiding to create a new cursor each time\
+	keyToInsert := uint32(row.ID)
+	cursor := t.findKey(keyToInsert)
+
+	// Check for duplicate keys
+	// Only compare when the cursor points to an existing cell; if it’s at numOfCells,
+	// the key wasn’t found and the cursor sits on the first free slot for insertion.
+	if cursor.cellNum < numOfCells {
+		existingKey := *leafNodeKey(page, cursor.cellNum)
+		if existingKey == keyToInsert {
+			return ErrDuplicateKey
+		}
+	}
+
 	return cursor.InsertLeafNode(uint32(row.ID), row)
 }
 

@@ -157,7 +157,7 @@ func main() {
 		}
 
 		if err := execute_statement(stmt, table); err != nil {
-			fmt.Printf("%s\n", err)
+			fmt.Printf("Error: %s.\n", err)
 			continue
 		}
 		fmt.Println("Executed.")
