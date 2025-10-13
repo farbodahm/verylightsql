@@ -83,5 +83,10 @@ func leafNodeValue(node []byte, cellNum uint32) []byte {
 	return cell[LeafNodeValueOffset : LeafNodeValueOffset+LeafNodeValueSize]
 }
 func initializeLeafNode(node []byte) {
+	*nodeType(node) = NodeTypeLeaf
 	*leafNodeNumCells(node) = 0
+}
+
+func nodeType(node []byte) *NodeType {
+	return (*NodeType)(unsafe.Pointer(&node[NodeTypeOffset]))
 }
