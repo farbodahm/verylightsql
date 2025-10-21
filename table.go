@@ -256,9 +256,6 @@ func (t *Table) Insert(row *Row) error {
 	}
 
 	numOfCells := *leafNodeNumCells(page)
-	if numOfCells >= uint32(LeafNodeMaxCells) {
-		panic(ErrTableFull) // For simplicity, we don't handle splitting in this example
-	}
 
 	keyToInsert := uint32(row.ID)
 	cursor := t.findKey(keyToInsert)

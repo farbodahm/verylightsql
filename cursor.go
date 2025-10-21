@@ -47,7 +47,8 @@ func (c *Cursor) InsertLeafNode(key uint32, value *Row) error {
 
 	numCells := *leafNodeNumCells(page)
 	if numCells >= uint32(LeafNodeMaxCells) {
-		return ErrLeafSplittingNotImplemented
+		// TODO: add log to file
+		return c.SplitAndInsert(key, value)
 	}
 
 	if c.cellNum < numCells {
@@ -79,32 +80,32 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 	initializeLeafNode(newPage)
 
 	// Move half the cells to the new page
-	for i := uint32(LeafNodeMaxCells); i >= 0; i-- {
+	for i := LeafNodeMaxCells; i >= 0; i-- {
 		var destPage []byte
 
-		if i >= uint32(LeafNodeLeftSplitCount) {
+		if i >= LeafNodeLeftSplitCount {
 			destPage = newPage
 		} else {
 			destPage = oldPage
 		}
-		indexWithinPage := i % uint32(LeafNodeLeftSplitCount)
-		dest := leafNodeCell(destPage, indexWithinPage)
+		indexWithinPage := i % LeafNodeLeftSplitCount
+		dest := leafNodeCell(destPage, uint32(indexWithinPage))
 
 		// Case 1: At the new row's insertion position - write the new row
 		// Destination: Either oldPage or newPage (determined by split logic above at line 85-89)
 		// Source: The new value parameter being inserted
-		if i == c.cellNum {
+		if uint32(i) == c.cellNum {
 			serializeRow(value, dest)
 			// Case 2: After the insertion position - shift existing cells right by 1
 			// Destination: Position i in either oldPage or newPage
 			// Source: Position (i-1) from oldPage (skipping over where new row will go)
-		} else if i > c.cellNum {
-			copy(dest, leafNodeCell(oldPage, i-1))
+		} else if uint32(i) > c.cellNum {
+			copy(dest, leafNodeCell(oldPage, uint32((i-1))))
 			// Case 3: Before the insertion position - copy existing cells as-is
 			// Destination: Position i in either oldPage or newPage
 			// Source: Position i from oldPage (no shift needed for cells before insertion)
 		} else {
-			copy(dest, leafNodeCell(oldPage, i))
+			copy(dest, leafNodeCell(oldPage, uint32(i)))
 		}
 	}
 
