@@ -218,7 +218,6 @@ func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
 // Old root copied to new page becomes left child.
 // New root node becomes the root of the tree.
 // Add of the right child is passed as argument.
-
 func (t *Table) createNewRoot(rightChildPageNum uint32) error {
 	oldRootPage, err := t.pager.getPage(t.rootPageNum)
 	if err != nil {
@@ -258,7 +257,7 @@ func (t *Table) Insert(row *Row) error {
 
 	numOfCells := *leafNodeNumCells(page)
 	if numOfCells >= uint32(LeafNodeMaxCells) {
-		return ErrTableFull // For simplicity, we don't handle splitting in this example
+		panic(ErrTableFull) // For simplicity, we don't handle splitting in this example
 	}
 
 	keyToInsert := uint32(row.ID)
