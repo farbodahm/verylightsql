@@ -91,6 +91,12 @@ func (p *Pager) flush(pageNum uint32) error {
 	return err
 }
 
+// getUnusedPageNum returns the next unused page number for appending new pages.
+// TODO: This function currently does not handle reusing freed pages after deletions.
+func (p *Pager) getUnusedPageNum() uint32 {
+	return p.numPages
+}
+
 func openPager(filename string) (*Pager, error) {
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
@@ -141,6 +147,7 @@ func OpenDatabase(filename string) (*Table, error) {
 			return nil, err
 		}
 		initializeLeafNode(rootNode)
+		setNodeRoot(rootNode, true)
 	}
 
 	return table, nil
@@ -162,18 +169,18 @@ func deserializeRow(src []byte, row *Row) {
 
 // findKey finds the position of a key in the table and returns a cursor to it
 // if the key is not found, it returns a cursor to the position where it should be inserted
-func (t *Table) findKey(key uint32) *Cursor {
+func (t *Table) findKey(key uint32) (*Cursor, error) {
 	rootPage, err := t.pager.getPage(t.rootPageNum)
 	if err != nil {
 		panic(err) // In a real application, handle this error properly
 	}
 
 	if *nodeType(rootPage) == NodeTypeLeaf {
-		return t.findKeyInLeaf(t.rootPageNum, key)
+		return t.findKeyInLeaf(t.rootPageNum, key), nil
 	}
 
-	// For simplicity, we only handle leaf nodes in this example
-	panic("Internal node search not implemented")
+	// TODO: For simplicity, we only handle leaf nodes in this example
+	return nil, errors.New("Internal node search not implemented")
 }
 
 func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
@@ -207,6 +214,40 @@ func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
 	return c
 }
 
+// createNewRoot creates a new root node when the current root is split
+// Old root copied to new page becomes left child.
+// New root node becomes the root of the tree.
+// Add of the right child is passed as argument.
+func (t *Table) createNewRoot(rightChildPageNum uint32) error {
+	oldRootPage, err := t.pager.getPage(t.rootPageNum)
+	if err != nil {
+		return err
+	}
+
+	rightChild, err := t.pager.getPage(rightChildPageNum)
+	if err != nil {
+		return err
+	}
+	leftChildPageNum := t.pager.getUnusedPageNum()
+	leftChild, err := t.pager.getPage(leftChildPageNum)
+	if err != nil {
+		return err
+	}
+
+	// left child has old root's data
+	copy(leftChild, oldRootPage)
+	setNodeRoot(leftChild, false)
+
+	// root node is a new internal node with one key and two children
+	initializeInternalNode(oldRootPage)
+	setNodeRoot(oldRootPage, true)
+	*internalNodeNumKeys(oldRootPage) = 1
+	*internalNodeChild(oldRootPage, 0) = leftChildPageNum
+	*internalNodeKey(oldRootPage, 0) = *leafNodeKey(rightChild, 0)
+	*internalNodeRightChild(oldRootPage) = rightChildPageNum
+	return nil
+}
+
 // Insert adds a new row to the table
 func (t *Table) Insert(row *Row) error {
 	page, err := t.pager.getPage(t.rootPageNum)
@@ -215,12 +256,12 @@ func (t *Table) Insert(row *Row) error {
 	}
 
 	numOfCells := *leafNodeNumCells(page)
-	if numOfCells >= uint32(LeafNodeMaxCells) {
-		return ErrTableFull // For simplicity, we don't handle splitting in this example
-	}
 
 	keyToInsert := uint32(row.ID)
-	cursor := t.findKey(keyToInsert)
+	cursor, err := t.findKey(keyToInsert)
+	if err != nil {
+		return err
+	}
 
 	// Check for duplicate keys
 	// Only compare when the cursor points to an existing cell; if it’s at numOfCells,

@@ -196,13 +196,13 @@ func Test_TableFullError(t *testing.T) {
 	}
 	found := false
 	for _, line := range out {
-		if strings.Contains(strings.ToLower(line), "table is full") {
+		if strings.Contains(strings.ToLower(line), "internal node search not implemented") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected table full error, but did not find it in output:\n%s", full)
+		t.Fatalf("expected 'internal node search not implemented' error, but did not find it in output:\n%s", full)
 	}
 }
 
@@ -268,7 +268,7 @@ func Test_PrintBtreeMetaCommandOnEmptyTable(t *testing.T) {
 	dir := t.TempDir()
 
 	want := wantWithHeader(
-		"> leaf (size 0)",
+		"> - leaf (size 0)",
 		"> Bye!",
 	)
 
@@ -285,10 +285,10 @@ func Test_PrintBtreeMetaCommandWithRows(t *testing.T) {
 		"> Executed.",
 		"> Executed.",
 		"> Executed.",
-		"> leaf (size 3)",
-		"  - 0 : 1",
-		"  - 1 : 2",
-		"  - 2 : 3",
+		"> - leaf (size 3)",
+		"  - 1",
+		"  - 2",
+		"  - 3",
 		"> Bye!",
 	)
 
@@ -315,4 +315,46 @@ func Test_ErrorOnDuplicateIDs(t *testing.T) {
 		"insert 1 newuser newemail",
 		".exit",
 	}, want)
+}
+
+func Test_PrintThreeLeafNodeBtree(t *testing.T) {
+	dir := t.TempDir()
+
+	script := make([]string, 0, 17)
+	for i := 1; i <= 14; i++ {
+		script = append(script, fmt.Sprintf("insert %d user%d person%d@example.com", i, i, i))
+	}
+	script = append(script, ".btree")
+	script = append(script, ".exit")
+
+	// Build expected output
+	want := wantWithHeader()
+	// 14 "Executed." lines for inserts
+	for range 14 {
+		want = append(want, "> Executed.")
+	}
+	// Btree structure output
+	want = append(want,
+		"> - internal (size 1)",
+		"  - leaf (size 7)",
+		"    - 1",
+		"    - 2",
+		"    - 3",
+		"    - 4",
+		"    - 5",
+		"    - 6",
+		"    - 7",
+		"  - key 8",
+		"  - leaf (size 7)",
+		"    - 8",
+		"    - 9",
+		"    - 10",
+		"    - 11",
+		"    - 12",
+		"    - 13",
+		"    - 14",
+		"> Bye!",
+	)
+
+	mustRunAndAssert(t, dir, script, want)
 }

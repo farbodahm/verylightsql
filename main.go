@@ -29,11 +29,7 @@ func execute_meta_command(input string, t *Table) error {
 	case ".constants":
 		printConstants()
 	case ".btree":
-		page, err := t.pager.getPage(t.rootPageNum)
-		if err != nil {
-			return err
-		}
-		printLeafNode(page)
+		printTree(t.pager, 0, 0)
 	default:
 		return fmt.Errorf("unrecognized command: %s", input)
 	}
@@ -49,12 +45,43 @@ func printConstants() {
 	fmt.Printf("LEAF_NODE_MAX_CELLS: %d\n", LeafNodeMaxCells)
 }
 
-func printLeafNode(node []byte) {
-	numCells := *leafNodeNumCells(node)
-	fmt.Printf("leaf (size %d)\n", numCells)
-	for i := uint32(0); i < numCells; i++ {
-		key := *leafNodeKey(node, i)
-		fmt.Printf("  - %d : %d\n", i, key)
+func indent(level int) {
+	for range level {
+		fmt.Print("  ")
+	}
+}
+
+func printTree(pager *Pager, pageNum uint32, indentationLevel int) {
+	page, err := pager.getPage(pageNum)
+	if err != nil {
+		panic(err)
+	}
+	var numKeys, child uint32
+
+	switch *nodeType(page) {
+	case NodeTypeLeaf:
+		numKeys = *leafNodeNumCells(page)
+		indent(indentationLevel)
+		fmt.Printf("- leaf (size %d)\n", numKeys)
+		for i := uint32(0); i < numKeys; i++ {
+			indent(indentationLevel + 1)
+			fmt.Printf("- %d\n", *leafNodeKey(page, i))
+		}
+	case NodeTypeInternal:
+		numKeys = *internalNodeNumKeys(page)
+		indent(indentationLevel)
+		fmt.Printf("- internal (size %d)\n", numKeys)
+		for i := uint32(0); i < numKeys; i++ {
+			child = *internalNodeChild(page, i)
+			printTree(pager, child, indentationLevel+1)
+
+			indent(indentationLevel + 1)
+			fmt.Printf("- key %d\n", *internalNodeKey(page, i))
+		}
+		child = *internalNodeRightChild(page)
+		printTree(pager, child, indentationLevel+1)
+	default:
+		panic("Unrecognized node type")
 	}
 }
 
