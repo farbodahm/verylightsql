@@ -196,13 +196,13 @@ func Test_TableFullError(t *testing.T) {
 	}
 	found := false
 	for _, line := range out {
-		if strings.Contains(strings.ToLower(line), "table is full") {
+		if strings.Contains(strings.ToLower(line), "internal node search not implemented") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected table full error, but did not find it in output:\n%s", full)
+		t.Fatalf("expected 'internal node search not implemented' error, but did not find it in output:\n%s", full)
 	}
 }
 

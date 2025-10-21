@@ -169,18 +169,18 @@ func deserializeRow(src []byte, row *Row) {
 
 // findKey finds the position of a key in the table and returns a cursor to it
 // if the key is not found, it returns a cursor to the position where it should be inserted
-func (t *Table) findKey(key uint32) *Cursor {
+func (t *Table) findKey(key uint32) (*Cursor, error) {
 	rootPage, err := t.pager.getPage(t.rootPageNum)
 	if err != nil {
 		panic(err) // In a real application, handle this error properly
 	}
 
 	if *nodeType(rootPage) == NodeTypeLeaf {
-		return t.findKeyInLeaf(t.rootPageNum, key)
+		return t.findKeyInLeaf(t.rootPageNum, key), nil
 	}
 
-	// For simplicity, we only handle leaf nodes in this example
-	panic("Internal node search not implemented")
+	// TODO: For simplicity, we only handle leaf nodes in this example
+	return nil, errors.New("Internal node search not implemented")
 }
 
 func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
@@ -258,7 +258,10 @@ func (t *Table) Insert(row *Row) error {
 	numOfCells := *leafNodeNumCells(page)
 
 	keyToInsert := uint32(row.ID)
-	cursor := t.findKey(keyToInsert)
+	cursor, err := t.findKey(keyToInsert)
+	if err != nil {
+		return err
+	}
 
 	// Check for duplicate keys
 	// Only compare when the cursor points to an existing cell; if it’s at numOfCells,
