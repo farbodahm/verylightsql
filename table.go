@@ -175,14 +175,18 @@ func (t *Table) findKey(key uint32) (*Cursor, error) {
 		panic(err) // In a real application, handle this error properly
 	}
 
-	if *nodeType(rootPage) == NodeTypeLeaf {
+	switch *nodeType(rootPage) {
+	case NodeTypeLeaf:
 		return t.findKeyInLeaf(t.rootPageNum, key), nil
+	case NodeTypeInternal:
+		return t.findKeyInInternal(t.rootPageNum, key)
+	default:
+		return nil, errors.New("unknown node type to find key")
 	}
-
-	// TODO: For simplicity, we only handle leaf nodes in this example
-	return nil, errors.New("Internal node search not implemented")
 }
 
+// findKeyInLeaf searches for a key in a leaf node and returns a cursor to its position
+// if the key is not found, it returns a cursor to the position where it should be inserted
 func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
 	node, err := t.pager.getPage(pageNum)
 	if err != nil {
@@ -212,6 +216,44 @@ func (t *Table) findKeyInLeaf(pageNum uint32, key uint32) *Cursor {
 
 	c.cellNum = i
 	return c
+}
+
+// findKeyInInternal searches for a key in an internal node and returns a cursor to its position
+// if the key is not found, it returns a cursor to the position where it should be inserted
+func (t *Table) findKeyInInternal(pageNum uint32, key uint32) (*Cursor, error) {
+	node, err := t.pager.getPage(pageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	numKeys := *internalNodeNumKeys(node)
+
+	// Binary search to find the child pointer to follow
+	i, j := uint32(0), numKeys
+	for i != j {
+		mid := (i + j) / 2
+		midKey := *internalNodeKey(node, mid)
+		if key < midKey {
+			j = mid
+		} else {
+			i = mid + 1
+		}
+	}
+
+	childPageNum := *internalNodeChild(node, i)
+	childNode, err := t.pager.getPage(childPageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	switch *nodeType(childNode) {
+	case NodeTypeLeaf:
+		return t.findKeyInLeaf(childPageNum, key), nil
+	case NodeTypeInternal:
+		return t.findKeyInInternal(childPageNum, key)
+	default:
+		return nil, errors.New("unknown node type in internal node child")
+	}
 }
 
 // createNewRoot creates a new root node when the current root is split

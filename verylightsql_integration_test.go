@@ -186,23 +186,25 @@ func Test_TableFullError(t *testing.T) {
 	script = append(script, ".exit")
 
 	out, full, code := runScript(t, dir, script)
-	if code != 0 {
-		t.Fatalf("unexpected exit code %d; output:\n%s", code, full)
+
+	// Expect the process to panic and exit with non-zero code
+	if code == 0 {
+		t.Fatalf("expected process to panic (non-zero exit code), but got exit code 0; output:\n%s", full)
 	}
 
-	// The error should be printed before the last prompt and exit
+	// Verify the panic message is in the output
 	if len(out) < 2 {
 		t.Fatalf("output too short:\n%q", out)
 	}
 	found := false
 	for _, line := range out {
-		if strings.Contains(strings.ToLower(line), "internal node search not implemented") {
+		if strings.Contains(line, "Need to implement updating parent after split") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected 'internal node search not implemented' error, but did not find it in output:\n%s", full)
+		t.Fatalf("expected panic message 'Need to implement updating parent after split' in output, but did not find it.\nExit code: %d\nOutput:\n%s", code, full)
 	}
 }
 
@@ -320,8 +322,8 @@ func Test_ErrorOnDuplicateIDs(t *testing.T) {
 func Test_PrintThreeLeafNodeBtree(t *testing.T) {
 	dir := t.TempDir()
 
-	script := make([]string, 0, 17)
-	for i := 1; i <= 14; i++ {
+	script := make([]string, 0, 18)
+	for i := 1; i <= 15; i++ {
 		script = append(script, fmt.Sprintf("insert %d user%d person%d@example.com", i, i, i))
 	}
 	script = append(script, ".btree")
@@ -329,8 +331,8 @@ func Test_PrintThreeLeafNodeBtree(t *testing.T) {
 
 	// Build expected output
 	want := wantWithHeader()
-	// 14 "Executed." lines for inserts
-	for range 14 {
+	// 15 "Executed." lines for inserts
+	for range 15 {
 		want = append(want, "> Executed.")
 	}
 	// Btree structure output
@@ -345,7 +347,7 @@ func Test_PrintThreeLeafNodeBtree(t *testing.T) {
 		"    - 6",
 		"    - 7",
 		"  - key 8",
-		"  - leaf (size 7)",
+		"  - leaf (size 8)",
 		"    - 8",
 		"    - 9",
 		"    - 10",
@@ -353,6 +355,7 @@ func Test_PrintThreeLeafNodeBtree(t *testing.T) {
 		"    - 12",
 		"    - 13",
 		"    - 14",
+		"    - 15",
 		"> Bye!",
 	)
 
