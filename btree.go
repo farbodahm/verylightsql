@@ -31,7 +31,9 @@ const (
 const (
 	LeafNodeNumCellsSize   = int(unsafe.Sizeof(uint32(0)))
 	LeafNodeNumCellsOffset = CommonHeaderSize
-	LeafNodeHeaderSize     = CommonHeaderSize + LeafNodeNumCellsSize
+	LeafNodeNextLeafSize   = int(unsafe.Sizeof(uint32(0)))
+	LeafNodeNextLeafOffset = LeafNodeNumCellsOffset + LeafNodeNumCellsSize
+	LeafNodeHeaderSize     = CommonHeaderSize + LeafNodeNumCellsSize + LeafNodeNextLeafSize
 )
 
 // Leaf node body Layout.
@@ -59,10 +61,12 @@ const (
 //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //  |                    LeafNodeNumCells (uint32)                  |  bytes 6..9
 //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//  |                        Cell[0]                                |  bytes 10..(10+CellSize-1)
+//  |                    LeafNodeNextLeaf (uint32)                  |  bytes 10..13
+//  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//  |                        Cell[0]                                |  bytes 14..(14+CellSize-1)
 //  |  Key (u32)  |                Value (rowSize bytes)            |
 //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//  |                        Cell[1]                                |  bytes (10+1*CellSize)..(10+2*CellSize-1)
+//  |                        Cell[1]                                |  bytes (14+1*CellSize)..(14+2*CellSize-1)
 //  |  Key (u32)  |                Value (rowSize bytes)            |
 //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //  |                              ...                              |
@@ -145,6 +149,7 @@ func initializeLeafNode(node []byte) {
 	*nodeType(node) = NodeTypeLeaf
 	setNodeRoot(node, false)
 	*leafNodeNumCells(node) = 0
+	*leafNodeNextLeaf(node) = 0 // 0 means no sibling
 }
 
 func nodeType(node []byte) *NodeType {
@@ -161,6 +166,10 @@ func setNodeRoot(node []byte, isRoot bool) {
 	} else {
 		node[IsRootOffset] = 0
 	}
+}
+
+func leafNodeNextLeaf(node []byte) *uint32 {
+	return (*uint32)(unsafe.Pointer(&node[LeafNodeNextLeafOffset]))
 }
 
 // Internal node helper functions

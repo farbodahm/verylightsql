@@ -287,6 +287,7 @@ func (t *Table) createNewRoot(rightChildPageNum uint32) error {
 	*internalNodeChild(oldRootPage, 0) = leftChildPageNum
 	*internalNodeKey(oldRootPage, 0) = *leafNodeKey(rightChild, 0)
 	*internalNodeRightChild(oldRootPage) = rightChildPageNum
+	// *leafNodeNextLeaf(leftChild) = rightChildPageNum
 	return nil
 }
 
@@ -320,13 +321,12 @@ func (t *Table) Insert(row *Row) error {
 
 // SelectAll returns all rows in the table
 func (t *Table) SelectAll() []Row {
-	page, _ := t.pager.getPage(t.rootPageNum)
-	numOfCells := *leafNodeNumCells(page)
-	rows := make([]Row, numOfCells)
 	cursor := TableStart(t)
-
+	rows := make([]Row, 0, t.pager.numPages*uint32(LeafNodeMaxCells))
+	var row Row
 	for !cursor.IsEndOfTable() {
-		deserializeRow(cursor.Value(), &rows[cursor.cellNum])
+		deserializeRow(cursor.Value(), &row)
+		rows = append(rows, row)
 		cursor.Advance()
 	}
 

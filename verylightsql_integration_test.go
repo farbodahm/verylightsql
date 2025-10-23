@@ -253,9 +253,9 @@ func Test_PrintConstantsMetaCommand(t *testing.T) {
 	want := wantWithHeader(
 		"> ROW_SIZE: 291",
 		"COMMON_NODE_HEADER_SIZE: 6",
-		"LEAF_NODE_HEADER_SIZE: 10",
+		"LEAF_NODE_HEADER_SIZE: 14",
 		"LEAF_NODE_CELL_SIZE: 295",
-		"LEAF_NODE_SPACE_FOR_CELLS: 4086",
+		"LEAF_NODE_SPACE_FOR_CELLS: 4082",
 		"LEAF_NODE_MAX_CELLS: 13",
 		"> Bye!",
 	)
@@ -356,6 +356,34 @@ func Test_PrintThreeLeafNodeBtree(t *testing.T) {
 		"    - 13",
 		"    - 14",
 		"    - 15",
+		"> Bye!",
+	)
+
+	mustRunAndAssert(t, dir, script, want)
+}
+
+func Test_PrintAllRowsInMultiLevelTree(t *testing.T) {
+	dir := t.TempDir()
+
+	script := make([]string, 0, 17)
+	for i := 1; i <= 15; i++ {
+		script = append(script, fmt.Sprintf("insert %d user%d person%d@example.com", i, i, i))
+	}
+	script = append(script, "select")
+	script = append(script, ".exit")
+
+	want := wantWithHeader()
+	// 15 "Executed." lines for inserts
+	for range 15 {
+		want = append(want, "> Executed.")
+	}
+
+	want = append(want, "> (1, user1, person1@example.com)")
+	for i := 2; i <= 15; i++ {
+		want = append(want, fmt.Sprintf("(%d, user%d, person%d@example.com)", i, i, i))
+	}
+	want = append(want,
+		"Executed.",
 		"> Bye!",
 	)
 
