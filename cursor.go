@@ -19,9 +19,15 @@ func (c *Cursor) Advance() {
 	c.cellNum++
 	numCells := *leafNodeNumCells(page)
 	if c.cellNum >= numCells {
-		c.endOfTable = true
+		// Check if there is a next leaf node
+		nextLeaf := *leafNodeNextLeaf(page)
+		if nextLeaf == 0 {
+			c.endOfTable = true
+		} else {
+			c.pageNum = nextLeaf
+			c.cellNum = 0
+		}
 	}
-
 }
 
 // Value returns a pointer to the position described by the cursor.
@@ -78,6 +84,8 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 		return err
 	}
 	initializeLeafNode(newPage)
+	*leafNodeNextLeaf(newPage) = *leafNodeNextLeaf(oldPage)
+	*leafNodeNextLeaf(oldPage) = newPageNum
 
 	// Move half the cells to the new page
 	for i := LeafNodeMaxCells; i >= 0; i-- {
@@ -95,7 +103,9 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 		// Destination: Either oldPage or newPage (determined by split logic above at line 85-89)
 		// Source: The new value parameter being inserted
 		if uint32(i) == c.cellNum {
-			serializeRow(value, dest)
+			serializeRow(value,
+				leafNodeValue(destPage, uint32(indexWithinPage)))
+			*leafNodeKey(destPage, uint32(indexWithinPage)) = key
 			// Case 2: After the insertion position - shift existing cells right by 1
 			// Destination: Position i in either oldPage or newPage
 			// Source: Position (i-1) from oldPage (skipping over where new row will go)
@@ -122,18 +132,17 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 
 // TableStart returns a cursor pointing to the start of the table.
 func TableStart(table *Table) *Cursor {
-	c := &Cursor{
-		pageNum: table.rootPageNum,
-		cellNum: 0,
-		table:   table,
-	}
-
-	rootNode, err := table.pager.getPage(c.pageNum)
+	c, err := table.findKey(0)
 	if err != nil {
-		panic(err) // TODO: In production code, handle this error properly
+		panic(err)
 	}
 
-	numCells := *leafNodeNumCells(rootNode)
+	page, err := table.pager.getPage(c.pageNum)
+	if err != nil {
+		panic(err)
+	}
+
+	numCells := *leafNodeNumCells(page)
 	if numCells == 0 {
 		c.endOfTable = true
 	}
