@@ -226,21 +226,9 @@ func (t *Table) findKeyInInternal(pageNum uint32, key uint32) (*Cursor, error) {
 		return nil, err
 	}
 
-	numKeys := *internalNodeNumKeys(node)
+	childIndex := internalNodeFindChild(node, key)
+	childPageNum := *internalNodeChild(node, childIndex)
 
-	// Binary search to find the child pointer to follow
-	i, j := uint32(0), numKeys
-	for i != j {
-		mid := (i + j) / 2
-		midKey := *internalNodeKey(node, mid)
-		if key < midKey {
-			j = mid
-		} else {
-			i = mid + 1
-		}
-	}
-
-	childPageNum := *internalNodeChild(node, i)
 	childNode, err := t.pager.getPage(childPageNum)
 	if err != nil {
 		return nil, err
@@ -287,7 +275,50 @@ func (t *Table) createNewRoot(rightChildPageNum uint32) error {
 	*internalNodeChild(oldRootPage, 0) = leftChildPageNum
 	*internalNodeKey(oldRootPage, 0) = *leafNodeKey(rightChild, 0)
 	*internalNodeRightChild(oldRootPage) = rightChildPageNum
-	// *leafNodeNextLeaf(leftChild) = rightChildPageNum
+	*nodeParent(leftChild) = t.rootPageNum
+	*nodeParent(rightChild) = t.rootPageNum
+	return nil
+}
+
+func (t *Table) internalNodeInsert(parentPageNum uint32, childPageNum uint32) error {
+	parentPage, err := t.pager.getPage(parentPageNum)
+	if err != nil {
+		return err
+	}
+	numKeys := *internalNodeNumKeys(parentPage)
+	if numKeys >= InternalNodeMaxKeys {
+		return errors.New("internal node splitting not implemented")
+	}
+	*internalNodeNumKeys(parentPage) = numKeys + 1
+
+	childPage, err := t.pager.getPage(childPageNum)
+	if err != nil {
+		return err
+	}
+	childMaxKey := getNodeMaxKey(childPage)
+	index := internalNodeFindChild(parentPage, childMaxKey)
+
+	rightChildPageNum := *internalNodeRightChild(parentPage)
+	rightChildPage, err := t.pager.getPage(rightChildPageNum)
+	if err != nil {
+		return err
+	}
+
+	if childMaxKey > getNodeMaxKey(rightChildPage) {
+		// Replace right child
+		*internalNodeChild(parentPage, numKeys) = rightChildPageNum
+		*internalNodeKey(parentPage, numKeys) = childMaxKey
+		*internalNodeRightChild(parentPage) = childPageNum
+	} else {
+		// Shift cells to make room for new child
+		for i := numKeys; i > index; i-- {
+			*internalNodeChild(parentPage, i) = *internalNodeChild(parentPage, i-1)
+			*internalNodeKey(parentPage, i) = *internalNodeKey(parentPage, i-1)
+		}
+		*internalNodeChild(parentPage, index) = childPageNum
+		*internalNodeKey(parentPage, index) = childMaxKey
+	}
+
 	return nil
 }
 

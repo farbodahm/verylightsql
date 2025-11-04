@@ -78,12 +78,14 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 	if err != nil {
 		return err
 	}
+	oldPageMaxKey := getNodeMaxKey(oldPage)
 	newPageNum := c.table.pager.getUnusedPageNum()
 	newPage, err := c.table.pager.getPage(newPageNum)
 	if err != nil {
 		return err
 	}
 	initializeLeafNode(newPage)
+	*nodeParent(newPage) = *nodeParent(oldPage)
 	*leafNodeNextLeaf(newPage) = *leafNodeNextLeaf(oldPage)
 	*leafNodeNextLeaf(oldPage) = newPageNum
 
@@ -125,8 +127,14 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 	if isNodeRoot(oldPage) {
 		return c.table.createNewRoot(newPageNum)
 	} else {
-		// TODO: For simplicity, we only handle root splits in this example
-		panic("Need to implement updating parent after split")
+		parentPageNum := *nodeParent(oldPage)
+		parentPage, err := c.table.pager.getPage(parentPageNum)
+		if err != nil {
+			return err
+		}
+		newMaxKey := getNodeMaxKey(oldPage)
+		updateInternalNodeKey(parentPage, oldPageMaxKey, newMaxKey)
+		return c.table.internalNodeInsert(parentPageNum, newPageNum)
 	}
 }
 
