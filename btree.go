@@ -92,6 +92,7 @@ const (
 	InternalNodeKeySize   = int(unsafe.Sizeof(uint32(0)))
 	InternalNodeChildSize = int(unsafe.Sizeof(uint32(0)))
 	InternalNodeCellSize  = InternalNodeKeySize + InternalNodeChildSize
+	InternalNodeMaxKeys   = 3
 )
 
 // Internal Node Layout
@@ -189,8 +190,8 @@ func internalNodeCell(node []byte, cellNum uint32) []byte {
 }
 
 func internalNodeKey(node []byte, cellNum uint32) *uint32 {
-	cell := internalNodeCell(node, cellNum)
-	return (*uint32)(unsafe.Pointer(&cell[InternalNodeChildSize]))
+	offset := InternalNodeHeaderSize + int(cellNum)*InternalNodeCellSize + InternalNodeChildSize
+	return (*uint32)(unsafe.Pointer(&node[offset]))
 }
 
 func internalNodeChild(node []byte, cellNum uint32) *uint32 {
@@ -203,6 +204,23 @@ func internalNodeChild(node []byte, cellNum uint32) *uint32 {
 		cell := internalNodeCell(node, cellNum)
 		return (*uint32)(unsafe.Pointer(&cell[0]))
 	}
+}
+
+// internalNodeFindChild returns the index of the child pointer which should contain the given key
+func internalNodeFindChild(node []byte, key uint32) uint32 {
+	// Binary search
+	numKeys := *internalNodeNumKeys(node)
+	i, j := uint32(0), numKeys
+	for i != j {
+		mid := (i + j) / 2
+		midKey := *internalNodeKey(node, mid)
+		if key < midKey {
+			j = mid
+		} else {
+			i = mid + 1
+		}
+	}
+	return i
 }
 
 func getNodeMaxKey(node []byte) uint32 {
@@ -222,4 +240,13 @@ func initializeInternalNode(node []byte) {
 	*nodeType(node) = NodeTypeInternal
 	setNodeRoot(node, false)
 	*internalNodeNumKeys(node) = 0
+}
+
+func nodeParent(node []byte) *uint32 {
+	return (*uint32)(unsafe.Pointer(&node[ParentPointerOffset]))
+}
+
+func updateInternalNodeKey(node []byte, oldKey uint32, newKey uint32) {
+	oldChildIndex := internalNodeFindChild(node, oldKey)
+	*internalNodeKey(node, oldChildIndex) = newKey
 }
