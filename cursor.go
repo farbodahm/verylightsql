@@ -90,19 +90,24 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 	*leafNodeNextLeaf(oldPage) = newPageNum
 
 	// Move half the cells to the new page
+	// We need to distribute (LeafNodeMaxCells + 1) cells into:
+	// - oldPage: LeafNodeLeftSplitCount cells (indices 0 to LeafNodeLeftSplitCount-1)
+	// - newPage: LeafNodeRightSplitCount cells (indices 0 to LeafNodeRightSplitCount-1)
 	for i := LeafNodeMaxCells; i >= 0; i-- {
 		var destPage []byte
+		var indexWithinPage int
 
 		if i >= LeafNodeLeftSplitCount {
 			destPage = newPage
+			indexWithinPage = i - LeafNodeLeftSplitCount
 		} else {
 			destPage = oldPage
+			indexWithinPage = i
 		}
-		indexWithinPage := i % LeafNodeLeftSplitCount
 		dest := leafNodeCell(destPage, uint32(indexWithinPage))
 
 		// Case 1: At the new row's insertion position - write the new row
-		// Destination: Either oldPage or newPage (determined by split logic above at line 85-89)
+		// Destination: Either oldPage or newPage (determined by split logic above)
 		// Source: The new value parameter being inserted
 		if uint32(i) == c.cellNum {
 			serializeRow(value,

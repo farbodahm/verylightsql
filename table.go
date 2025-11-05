@@ -307,7 +307,7 @@ func (t *Table) internalNodeInsert(parentPageNum uint32, childPageNum uint32) er
 	if childMaxKey > getNodeMaxKey(rightChildPage) {
 		// Replace right child
 		*internalNodeChild(parentPage, numKeys) = rightChildPageNum
-		*internalNodeKey(parentPage, numKeys) = childMaxKey
+		*internalNodeKey(parentPage, numKeys) = getNodeMaxKey(rightChildPage)
 		*internalNodeRightChild(parentPage) = childPageNum
 	} else {
 		// Shift cells to make room for new child
