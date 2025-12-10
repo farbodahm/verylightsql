@@ -273,10 +273,25 @@ func (t *Table) createNewRoot(rightChildPageNum uint32) error {
 	setNodeRoot(oldRootPage, true)
 	*internalNodeNumKeys(oldRootPage) = 1
 	*internalNodeChild(oldRootPage, 0) = leftChildPageNum
-	*internalNodeKey(oldRootPage, 0) = *leafNodeKey(rightChild, 0)
+	// Use getNodeMaxKey to get the max key from left child - works for both leaf and internal nodes
+	*internalNodeKey(oldRootPage, 0) = getNodeMaxKey(leftChild)
 	*internalNodeRightChild(oldRootPage) = rightChildPageNum
 	*nodeParent(leftChild) = t.rootPageNum
 	*nodeParent(rightChild) = t.rootPageNum
+
+	// If the left child is an internal node, we need to update the parent pointers
+	// of all its children to point to the new left child page
+	if *nodeType(leftChild) == NodeTypeInternal {
+		numKeys := *internalNodeNumKeys(leftChild)
+		for i := uint32(0); i <= numKeys; i++ {
+			grandchildPageNum := *internalNodeChild(leftChild, i)
+			grandchild, err := t.pager.getPage(grandchildPageNum)
+			if err != nil {
+				return err
+			}
+			*nodeParent(grandchild) = leftChildPageNum
+		}
+	}
 	return nil
 }
 
@@ -287,16 +302,15 @@ func (t *Table) internalNodeInsert(parentPageNum uint32, childPageNum uint32) er
 	}
 	numKeys := *internalNodeNumKeys(parentPage)
 	if numKeys >= InternalNodeMaxKeys {
-		return errors.New("internal node splitting not implemented")
+		// Need to split the internal node
+		return t.internalNodeSplitAndInsert(parentPageNum, childPageNum)
 	}
-	*internalNodeNumKeys(parentPage) = numKeys + 1
 
 	childPage, err := t.pager.getPage(childPageNum)
 	if err != nil {
 		return err
 	}
 	childMaxKey := getNodeMaxKey(childPage)
-	index := internalNodeFindChild(parentPage, childMaxKey)
 
 	rightChildPageNum := *internalNodeRightChild(parentPage)
 	rightChildPage, err := t.pager.getPage(rightChildPageNum)
@@ -305,21 +319,255 @@ func (t *Table) internalNodeInsert(parentPageNum uint32, childPageNum uint32) er
 	}
 
 	if childMaxKey > getNodeMaxKey(rightChildPage) {
-		// Replace right child
-		*internalNodeChild(parentPage, numKeys) = rightChildPageNum
+		// New child becomes the rightmost child
+		// Move current right child to become a regular cell
+		*internalNodeChildPtr(parentPage, numKeys) = rightChildPageNum
 		*internalNodeKey(parentPage, numKeys) = getNodeMaxKey(rightChildPage)
 		*internalNodeRightChild(parentPage) = childPageNum
 	} else {
+		// Find where to insert the new child
+		index := internalNodeFindChild(parentPage, childMaxKey)
 		// Shift cells to make room for new child
 		for i := numKeys; i > index; i-- {
-			*internalNodeChild(parentPage, i) = *internalNodeChild(parentPage, i-1)
+			*internalNodeChildPtr(parentPage, i) = *internalNodeChild(parentPage, i-1)
 			*internalNodeKey(parentPage, i) = *internalNodeKey(parentPage, i-1)
 		}
-		*internalNodeChild(parentPage, index) = childPageNum
+		*internalNodeChildPtr(parentPage, index) = childPageNum
 		*internalNodeKey(parentPage, index) = childMaxKey
 	}
 
+	// Increment key count after all modifications
+	*internalNodeNumKeys(parentPage) = numKeys + 1
+
 	return nil
+}
+
+// internalNodeSplitAndInsert splits an internal node and inserts a new child.
+// This is called when an internal node is full and we need to add another child.
+//
+// Algorithm:
+// 1. Create a new right sibling node
+// 2. Collect all keys/children including the new one
+// 3. Redistribute: left gets some, middle key goes to parent, right gets the rest
+// 4. Update parent pointers for all children
+// 5. If root was split, update the new root; otherwise insert into parent
+func (t *Table) internalNodeSplitAndInsert(oldPageNum uint32, childPageNum uint32) error {
+	oldPage, err := t.pager.getPage(oldPageNum)
+	if err != nil {
+		return err
+	}
+
+	childPage, err := t.pager.getPage(childPageNum)
+	if err != nil {
+		return err
+	}
+	childMaxKey := getNodeMaxKey(childPage)
+
+	// Check if we're splitting the root
+	splittingRoot := isNodeRoot(oldPage)
+
+	// Get information we need before potentially modifying pages
+	oldNumKeys := *internalNodeNumKeys(oldPage)
+	oldRightChild := *internalNodeRightChild(oldPage)
+	oldParentPageNum := *nodeParent(oldPage)
+
+	curRightChildPage, err := t.pager.getPage(oldRightChild)
+	if err != nil {
+		return err
+	}
+
+	// Determine where the new child should be inserted
+	var newChildIndex uint32
+	if childMaxKey > getNodeMaxKey(curRightChildPage) {
+		// New child would become the rightmost
+		newChildIndex = oldNumKeys + 1
+	} else {
+		newChildIndex = internalNodeFindChild(oldPage, childMaxKey)
+	}
+
+	// Create temporary storage for all keys and children (including the new one)
+	// We have oldNumKeys existing cells + 1 right child = oldNumKeys+1 children
+	// Plus 1 new child = oldNumKeys+2 children total, oldNumKeys+1 keys
+	type keyChild struct {
+		child uint32
+		key   uint32
+	}
+	allCells := make([]keyChild, InternalNodeMaxKeys+1)
+	var allRightChild uint32
+
+	// Collect all existing cells plus the new one in sorted order
+	cellIdx := 0
+	for i := uint32(0); i <= oldNumKeys; i++ {
+		// Insert new child at its position
+		if i == newChildIndex {
+			allCells[cellIdx] = keyChild{child: childPageNum, key: childMaxKey}
+			cellIdx++
+		}
+
+		if i < oldNumKeys {
+			allCells[cellIdx] = keyChild{
+				child: *internalNodeChild(oldPage, i),
+				key:   *internalNodeKey(oldPage, i),
+			}
+			cellIdx++
+		} else if i == oldNumKeys {
+			// Handle the right child
+			if newChildIndex == oldNumKeys+1 {
+				// New child becomes rightmost
+				allCells[cellIdx] = keyChild{child: oldRightChild, key: getNodeMaxKey(curRightChildPage)}
+				cellIdx++
+				allRightChild = childPageNum
+			} else {
+				allRightChild = oldRightChild
+			}
+		}
+	}
+
+	// Now we have:
+	// allCells[0..InternalNodeMaxKeys] = all keys/child pairs in sorted order
+	// allRightChild = the rightmost child
+	//
+	// We'll distribute as:
+	// - Left node: cells 0..InternalNodeLeftSplitCount-1, right child = cell[InternalNodeLeftSplitCount].child
+	// - Parent key: cell[InternalNodeLeftSplitCount].key
+	// - Right node: cells InternalNodeLeftSplitCount+1..InternalNodeMaxKeys, right child = allRightChild
+
+	// Create new right sibling node
+	newPageNum := t.pager.getUnusedPageNum()
+	newPage, err := t.pager.getPage(newPageNum)
+	if err != nil {
+		return err
+	}
+	initializeInternalNode(newPage)
+
+	// The key that will go to parent
+	parentKey := allCells[InternalNodeLeftSplitCount].key
+
+	if splittingRoot {
+		// We need to create a new root first, then set up both children
+		// The left child will be a copy of the old root, the right child is new
+
+		// Allocate a page for left child (copy of old root)
+		leftChildPageNum := t.pager.getUnusedPageNum()
+		leftChild, err := t.pager.getPage(leftChildPageNum)
+		if err != nil {
+			return err
+		}
+
+		// Copy old root to left child
+		copy(leftChild, oldPage)
+		setNodeRoot(leftChild, false)
+
+		// Set up old root as new internal root
+		initializeInternalNode(oldPage)
+		setNodeRoot(oldPage, true)
+		*internalNodeNumKeys(oldPage) = 1
+		*internalNodeChild(oldPage, 0) = leftChildPageNum
+		*internalNodeKey(oldPage, 0) = parentKey
+		*internalNodeRightChild(oldPage) = newPageNum
+
+		// Update parent pointers
+		*nodeParent(leftChild) = t.rootPageNum
+		*nodeParent(newPage) = t.rootPageNum
+
+		// Now leftChild has the old content, we need to update it
+		// Update left child with correct cells
+		*internalNodeNumKeys(leftChild) = uint32(InternalNodeLeftSplitCount)
+		for i := 0; i < InternalNodeLeftSplitCount; i++ {
+			*internalNodeChildPtr(leftChild, uint32(i)) = allCells[i].child
+			*internalNodeKey(leftChild, uint32(i)) = allCells[i].key
+		}
+		*internalNodeRightChild(leftChild) = allCells[InternalNodeLeftSplitCount].child
+
+		// Update new (right) node
+		*internalNodeNumKeys(newPage) = uint32(InternalNodeRightSplitCount)
+		for i := 0; i < InternalNodeRightSplitCount; i++ {
+			srcIdx := InternalNodeLeftSplitCount + 1 + i
+			*internalNodeChildPtr(newPage, uint32(i)) = allCells[srcIdx].child
+			*internalNodeKey(newPage, uint32(i)) = allCells[srcIdx].key
+		}
+		*internalNodeRightChild(newPage) = allRightChild
+
+		// Update parent pointers for all grandchildren
+		// Children that go to leftChild
+		for i := uint32(0); i <= uint32(InternalNodeLeftSplitCount); i++ {
+			grandchildPageNum := *internalNodeChild(leftChild, i)
+			grandchild, err := t.pager.getPage(grandchildPageNum)
+			if err != nil {
+				return err
+			}
+			*nodeParent(grandchild) = leftChildPageNum
+		}
+		// Children that go to newPage
+		for i := uint32(0); i <= uint32(InternalNodeRightSplitCount); i++ {
+			grandchildPageNum := *internalNodeChild(newPage, i)
+			grandchild, err := t.pager.getPage(grandchildPageNum)
+			if err != nil {
+				return err
+			}
+			*nodeParent(grandchild) = newPageNum
+		}
+
+		return nil
+	}
+
+	// Non-root split: update old page in place, create new sibling
+
+	// Set parent for new page
+	*nodeParent(newPage) = oldParentPageNum
+
+	// Update old (left) node
+	*internalNodeNumKeys(oldPage) = uint32(InternalNodeLeftSplitCount)
+	for i := 0; i < InternalNodeLeftSplitCount; i++ {
+		*internalNodeChildPtr(oldPage, uint32(i)) = allCells[i].child
+		*internalNodeKey(oldPage, uint32(i)) = allCells[i].key
+	}
+	*internalNodeRightChild(oldPage) = allCells[InternalNodeLeftSplitCount].child
+
+	// Update new (right) node
+	*internalNodeNumKeys(newPage) = uint32(InternalNodeRightSplitCount)
+	for i := 0; i < InternalNodeRightSplitCount; i++ {
+		srcIdx := InternalNodeLeftSplitCount + 1 + i
+		*internalNodeChildPtr(newPage, uint32(i)) = allCells[srcIdx].child
+		*internalNodeKey(newPage, uint32(i)) = allCells[srcIdx].key
+	}
+	*internalNodeRightChild(newPage) = allRightChild
+
+	// Update parent pointers for all children that moved to the new node
+	for i := uint32(0); i <= uint32(InternalNodeRightSplitCount); i++ {
+		childPgNum := *internalNodeChild(newPage, i)
+		childPg, err := t.pager.getPage(childPgNum)
+		if err != nil {
+			return err
+		}
+		*nodeParent(childPg) = newPageNum
+	}
+
+	// Update parent pointers for children in old node (they may have been shuffled)
+	for i := uint32(0); i <= uint32(InternalNodeLeftSplitCount); i++ {
+		childPgNum := *internalNodeChild(oldPage, i)
+		childPg, err := t.pager.getPage(childPgNum)
+		if err != nil {
+			return err
+		}
+		*nodeParent(childPg) = oldPageNum
+	}
+
+	// Update the old key in parent and insert new child
+	parentPage, err := t.pager.getPage(oldParentPageNum)
+	if err != nil {
+		return err
+	}
+
+	// Find the child index by page number and update the key
+	oldChildIndex := internalNodeFindChildByPage(parentPage, oldPageNum)
+	if oldChildIndex < *internalNodeNumKeys(parentPage) {
+		*internalNodeKey(parentPage, oldChildIndex) = getNodeMaxKey(oldPage)
+	}
+
+	// Insert the new right sibling into the parent
+	// This may recursively split the parent
+	return t.internalNodeInsert(oldParentPageNum, newPageNum)
 }
 
 // Insert adds a new row to the table

@@ -177,8 +177,9 @@ func Test_InsertMaxLengthStrings(t *testing.T) {
 func Test_TableFullError(t *testing.T) {
 	dir := t.TempDir()
 
-	// Table max rows is 4096 (pageSize=4096, rowSize=292, rowsPerPage=14, tableMaxPages=100, tableMaxRows=1400)
-	// So we try to insert 1401 rows to trigger the error
+	// Table max rows is limited by tableMaxPages=100
+	// With internal node splitting working, we can insert many more rows
+	// until we run out of pages. Try to insert enough rows to fill all pages.
 	script := make([]string, 0, 1402)
 	for i := 1; i <= 1401; i++ {
 		script = append(script, fmt.Sprintf("insert %d user%d person%d@example.com", i, i, i))
@@ -187,24 +188,24 @@ func Test_TableFullError(t *testing.T) {
 
 	out, full, code := runScript(t, dir, script)
 
-	// Expect the process to panic and exit with non-zero code
+	// Expect the process to exit (either success or with "page number out of bounds" error)
 	if code != 0 {
 		t.Fatalf("expected process to return zero exit code, but got exit code %d; output:\n%s", code, full)
 	}
 
-	// Verify the panic message is in the output
+	// Verify we got "page number out of bounds" error when we ran out of pages
 	if len(out) < 2 {
 		t.Fatalf("output too short:\n%q", out)
 	}
 	found := false
 	for _, line := range out {
-		if strings.Contains(line, "internal node splitting not implemented") {
+		if strings.Contains(line, "page number out of bounds") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected panic message 'internal node splitting not implemented' in output, but did not find it.\nExit code: %d\nOutput:\n%s", code, full)
+		t.Fatalf("expected 'page number out of bounds' error in output when table is full, but did not find it.\nExit code: %d\nOutput:\n%s", code, full)
 	}
 }
 
@@ -346,7 +347,7 @@ func Test_PrintThreeLeafNodeBtree(t *testing.T) {
 		"    - 5",
 		"    - 6",
 		"    - 7",
-		"  - key 8",
+		"  - key 7",
 		"  - leaf (size 8)",
 		"    - 8",
 		"    - 9",

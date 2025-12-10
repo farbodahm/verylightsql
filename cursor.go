@@ -78,7 +78,6 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 	if err != nil {
 		return err
 	}
-	oldPageMaxKey := getNodeMaxKey(oldPage)
 	newPageNum := c.table.pager.getUnusedPageNum()
 	newPage, err := c.table.pager.getPage(newPageNum)
 	if err != nil {
@@ -137,8 +136,13 @@ func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
 		if err != nil {
 			return err
 		}
-		newMaxKey := getNodeMaxKey(oldPage)
-		updateInternalNodeKey(parentPage, oldPageMaxKey, newMaxKey)
+		// Find the child index by page number (more reliable than by key)
+		oldChildIndex := internalNodeFindChildByPage(parentPage, c.pageNum)
+		// Update the key for this child (only if it's not the rightmost child)
+		if oldChildIndex < *internalNodeNumKeys(parentPage) {
+			newMaxKey := getNodeMaxKey(oldPage)
+			*internalNodeKey(parentPage, oldChildIndex) = newMaxKey
+		}
 		return c.table.internalNodeInsert(parentPageNum, newPageNum)
 	}
 }
