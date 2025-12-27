@@ -43,12 +43,13 @@ jobs:
           name: Go Benchmark
           tool: "go"
           output-file-path: benchmark-results.txt
-          # Store benchmark data in gh-pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           summary-always: true
-          comment-on-alert: true
-          comment-always: true
+          # Only comment on PRs, not on main branch pushes
+          comment-on-alert: ${{ github.event_name == 'pull_request' }}
+          comment-always: ${{ github.event_name == 'pull_request' }}
           alert-threshold: "150%"
           fail-on-alert: false
-          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          # auto-push must be false when using external-data-json-path
+          auto-push: false
           external-data-json-path: ./cache/benchmark-data.json
