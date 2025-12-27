@@ -25,20 +25,17 @@ jobs:
         with:
           go-version: "1.22"
 
-      - name: Create cache directory
-        run: mkdir -p ./cache
+      - name: Run benchmarks
+        run: |
+          go test -bench=. -benchmem -count=1 -run=^$ | tee benchmark-results.txt
 
-      - name: Restore benchmark data
-        uses: actions/cache/restore@v4
+      - name: Download previous benchmark data
+        uses: actions/cache@v4
         with:
           path: ./cache
           key: ${{ runner.os }}-benchmark-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-benchmark-
-
-      - name: Run benchmarks
-        run: |
-          go test -bench=. -benchmem -count=1 -run=^$ | tee benchmark-results.txt
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
@@ -56,10 +53,3 @@ jobs:
           # auto-push must be false when using external-data-json-path
           auto-push: false
           external-data-json-path: ./cache/benchmark-data.json
-
-      - name: Save benchmark data
-        uses: actions/cache/save@v4
-        if: github.ref == 'refs/heads/main'
-        with:
-          path: ./cache
-          key: ${{ runner.os }}-benchmark-${{ github.sha }}
