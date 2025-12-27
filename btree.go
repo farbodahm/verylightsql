@@ -95,6 +95,15 @@ const (
 	InternalNodeMaxKeys   = 3
 )
 
+// Internal node split constants
+// When splitting an internal node with InternalNodeMaxKeys keys, we need to
+// redistribute (InternalNodeMaxKeys + 1) keys (including the new one being inserted).
+// The middle key goes up to the parent, and the rest are split between left and right.
+const (
+	InternalNodeRightSplitCount = (InternalNodeMaxKeys + 1) / 2                               // Keys that go to right node
+	InternalNodeLeftSplitCount  = (InternalNodeMaxKeys + 1) - InternalNodeRightSplitCount - 1 // Keys that stay in left node (-1 for key promoted to parent)
+)
+
 // Internal Node Layout
 //
 // Internal nodes store keys and child pointers that guide tree traversal.
@@ -249,4 +258,28 @@ func nodeParent(node []byte) *uint32 {
 func updateInternalNodeKey(node []byte, oldKey uint32, newKey uint32) {
 	oldChildIndex := internalNodeFindChild(node, oldKey)
 	*internalNodeKey(node, oldChildIndex) = newKey
+}
+
+// internalNodeFindChildByPage returns the index of the child with the given page number.
+// Returns numKeys if the child is the right child.
+// Panics if the child is not found.
+func internalNodeFindChildByPage(node []byte, childPageNum uint32) uint32 {
+	numKeys := *internalNodeNumKeys(node)
+	for i := uint32(0); i < numKeys; i++ {
+		if *internalNodeChild(node, i) == childPageNum {
+			return i
+		}
+	}
+	if *internalNodeRightChild(node) == childPageNum {
+		return numKeys
+	}
+	panic("child not found in parent")
+}
+
+// internalNodeChildPtr returns a pointer to the child page number at the given cell index.
+// Unlike internalNodeChild which handles the right child case specially,
+// this returns the raw pointer to the child field in the cell.
+func internalNodeChildPtr(node []byte, cellNum uint32) *uint32 {
+	cell := internalNodeCell(node, cellNum)
+	return (*uint32)(unsafe.Pointer(&cell[0]))
 }
