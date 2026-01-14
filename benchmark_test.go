@@ -221,107 +221,101 @@ func BenchmarkSerializeRow(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		serializeRow(row, dest)
+		SerializeRow(row, dest)
 	}
 }
 
 func BenchmarkDeserializeRow(b *testing.B) {
 	src := make([]byte, rowSize)
 	row := createRow(42)
-	serializeRow(row, src)
+	SerializeRow(row, src)
 
 	var destRow Row
 
 	b.ResetTimer()
 	for range b.N {
-		deserializeRow(src, &destRow)
+		DeserializeRow(src, &destRow)
 	}
 }
 
 func BenchmarkBTreeLeafNode(b *testing.B) {
 	b.Run("KeyAccess", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeLeafNode(node)
-		*leafNodeNumCells(node) = uint32(LeafNodeMaxCells)
+		node := NewLeafNode()
+		node.NumCells = uint32(LeafNodeMaxCells)
 
 		// Initialize keys
 		for i := range LeafNodeMaxCells {
-			*leafNodeKey(node, uint32(i)) = uint32(i) * 10
+			node.Cells[i].Key = uint32(i) * 10
 		}
 
 		b.ResetTimer()
 		for i := range b.N {
-			_ = *leafNodeKey(node, uint32(i%LeafNodeMaxCells))
+			_ = node.Cells[i%LeafNodeMaxCells].Key
 		}
 	})
 
 	b.Run("ValueAccess", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeLeafNode(node)
-		*leafNodeNumCells(node) = uint32(LeafNodeMaxCells)
+		node := NewLeafNode()
+		node.NumCells = uint32(LeafNodeMaxCells)
 
 		b.ResetTimer()
 		for i := range b.N {
-			_ = leafNodeValue(node, uint32(i%LeafNodeMaxCells))
+			_ = node.Cells[i%LeafNodeMaxCells].Value
 		}
 	})
 
 	b.Run("CellAccess", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeLeafNode(node)
-		*leafNodeNumCells(node) = uint32(LeafNodeMaxCells)
+		node := NewLeafNode()
+		node.NumCells = uint32(LeafNodeMaxCells)
 
 		b.ResetTimer()
 		for i := range b.N {
-			_ = leafNodeCell(node, uint32(i%LeafNodeMaxCells))
+			_ = node.Cells[i%LeafNodeMaxCells]
 		}
 	})
 }
 
 func BenchmarkBTreeInternalNode(b *testing.B) {
 	b.Run("FindChild", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeInternalNode(node)
-		*internalNodeNumKeys(node) = InternalNodeMaxKeys
+		node := NewInternalNode()
+		node.NumKeys = InternalNodeMaxKeys
 
 		// Set up keys: 100, 200, 300
 		for i := range InternalNodeMaxKeys {
-			*internalNodeKey(node, uint32(i)) = uint32(i+1) * 100
+			node.Cells[i].Key = uint32(i+1) * 100
 		}
 
 		b.ResetTimer()
 		for i := range b.N {
-			_ = internalNodeFindChild(node, uint32(i%400))
+			_ = node.FindChild(uint32(i % 400))
 		}
 	})
 
 	b.Run("KeyAccess", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeInternalNode(node)
-		*internalNodeNumKeys(node) = InternalNodeMaxKeys
+		node := NewInternalNode()
+		node.NumKeys = InternalNodeMaxKeys
 
 		for i := range InternalNodeMaxKeys {
-			*internalNodeKey(node, uint32(i)) = uint32(i+1) * 100
+			node.Cells[i].Key = uint32(i+1) * 100
 		}
 
 		b.ResetTimer()
 		for i := range b.N {
-			_ = *internalNodeKey(node, uint32(i%InternalNodeMaxKeys))
+			_ = node.Cells[i%InternalNodeMaxKeys].Key
 		}
 	})
 
 	b.Run("ChildAccess", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeInternalNode(node)
-		*internalNodeNumKeys(node) = InternalNodeMaxKeys
+		node := NewInternalNode()
+		node.NumKeys = InternalNodeMaxKeys
 
 		for i := range InternalNodeMaxKeys {
-			_ = *internalNodeChild(node, uint32(i))
+			node.Cells[i].Child = uint32(i + 1)
 		}
 
 		b.ResetTimer()
 		for i := range b.N {
-			_ = *internalNodeChild(node, uint32(i%InternalNodeMaxKeys))
+			_ = node.GetChild(uint32(i % InternalNodeMaxKeys))
 		}
 	})
 }
@@ -429,30 +423,88 @@ func BenchmarkMixedWorkload(b *testing.B) {
 
 func BenchmarkGetNodeMaxKey(b *testing.B) {
 	b.Run("LeafNode", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeLeafNode(node)
-		*leafNodeNumCells(node) = uint32(LeafNodeMaxCells)
+		node := NewLeafNode()
+		node.NumCells = uint32(LeafNodeMaxCells)
 		for i := range LeafNodeMaxCells {
-			*leafNodeKey(node, uint32(i)) = uint32(i) * 10
+			node.Cells[i].Key = uint32(i) * 10
 		}
 
 		b.ResetTimer()
 		for range b.N {
-			_ = getNodeMaxKey(node)
+			_ = node.GetMaxKey()
 		}
 	})
 
 	b.Run("InternalNode", func(b *testing.B) {
-		node := make([]byte, pageSize)
-		initializeInternalNode(node)
-		*internalNodeNumKeys(node) = InternalNodeMaxKeys
+		node := NewInternalNode()
+		node.NumKeys = InternalNodeMaxKeys
 		for i := range InternalNodeMaxKeys {
-			*internalNodeKey(node, uint32(i)) = uint32(i+1) * 100
+			node.Cells[i].Key = uint32(i+1) * 100
 		}
 
 		b.ResetTimer()
 		for range b.N {
-			_ = getNodeMaxKey(node)
+			_ = node.GetMaxKey()
+		}
+	})
+}
+
+func BenchmarkNodeSerialization(b *testing.B) {
+	b.Run("LeafNode_Serialize", func(b *testing.B) {
+		node := NewLeafNode()
+		node.NumCells = uint32(LeafNodeMaxCells)
+		for i := range LeafNodeMaxCells {
+			node.Cells[i].Key = uint32(i) * 10
+			node.Cells[i].Value.ID = int32(i)
+		}
+
+		b.ResetTimer()
+		for range b.N {
+			_, _ = node.Serialize()
+		}
+	})
+
+	b.Run("LeafNode_Deserialize", func(b *testing.B) {
+		node := NewLeafNode()
+		node.NumCells = uint32(LeafNodeMaxCells)
+		for i := range LeafNodeMaxCells {
+			node.Cells[i].Key = uint32(i) * 10
+		}
+		page, _ := node.Serialize()
+
+		b.ResetTimer()
+		for range b.N {
+			newNode := &LeafNode{}
+			_ = newNode.Deserialize(page)
+		}
+	})
+
+	b.Run("InternalNode_Serialize", func(b *testing.B) {
+		node := NewInternalNode()
+		node.NumKeys = InternalNodeMaxKeys
+		for i := range InternalNodeMaxKeys {
+			node.Cells[i].Key = uint32(i+1) * 100
+			node.Cells[i].Child = uint32(i + 1)
+		}
+
+		b.ResetTimer()
+		for range b.N {
+			_, _ = node.Serialize()
+		}
+	})
+
+	b.Run("InternalNode_Deserialize", func(b *testing.B) {
+		node := NewInternalNode()
+		node.NumKeys = InternalNodeMaxKeys
+		for i := range InternalNodeMaxKeys {
+			node.Cells[i].Key = uint32(i+1) * 100
+		}
+		page, _ := node.Serialize()
+
+		b.ResetTimer()
+		for range b.N {
+			newNode := &InternalNode{}
+			_ = newNode.Deserialize(page)
 		}
 	})
 }
