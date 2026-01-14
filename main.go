@@ -56,30 +56,36 @@ func printTree(pager *Pager, pageNum uint32, indentationLevel int) {
 	if err != nil {
 		panic(err)
 	}
-	var numKeys, child uint32
 
-	switch *nodeType(page) {
+	nodeType := GetNodeTypeFromPage(page)
+
+	switch nodeType {
 	case NodeTypeLeaf:
-		numKeys = *leafNodeNumCells(page)
+		node, err := DeserializeLeafNode(page)
+		if err != nil {
+			panic(err)
+		}
 		indent(indentationLevel)
-		fmt.Printf("- leaf (size %d)\n", numKeys)
-		for i := uint32(0); i < numKeys; i++ {
+		fmt.Printf("- leaf (size %d)\n", node.NumCells)
+		for i := uint32(0); i < node.NumCells; i++ {
 			indent(indentationLevel + 1)
-			fmt.Printf("- %d\n", *leafNodeKey(page, i))
+			fmt.Printf("- %d\n", node.Cells[i].Key)
 		}
 	case NodeTypeInternal:
-		numKeys = *internalNodeNumKeys(page)
+		node, err := DeserializeInternalNode(page)
+		if err != nil {
+			panic(err)
+		}
 		indent(indentationLevel)
-		fmt.Printf("- internal (size %d)\n", numKeys)
-		for i := uint32(0); i < numKeys; i++ {
-			child = *internalNodeChild(page, i)
+		fmt.Printf("- internal (size %d)\n", node.NumKeys)
+		for i := uint32(0); i < node.NumKeys; i++ {
+			child := node.Cells[i].Child
 			printTree(pager, child, indentationLevel+1)
 
 			indent(indentationLevel + 1)
-			fmt.Printf("- key %d\n", *internalNodeKey(page, i))
+			fmt.Printf("- key %d\n", node.Cells[i].Key)
 		}
-		child = *internalNodeRightChild(page)
-		printTree(pager, child, indentationLevel+1)
+		printTree(pager, node.RightChild, indentationLevel+1)
 	default:
 		panic("Unrecognized node type")
 	}

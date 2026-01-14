@@ -10,35 +10,31 @@ type Cursor struct {
 
 // Advance moves the cursor to the next row in the table.
 func (c *Cursor) Advance() {
-	pageNum := c.pageNum
-	page, err := c.table.pager.getPage(pageNum)
+	node, err := c.table.pager.getLeafNode(c.pageNum)
 	if err != nil {
 		panic(err) // TODO: In production code, handle this error properly
 	}
 
 	c.cellNum++
-	numCells := *leafNodeNumCells(page)
-	if c.cellNum >= numCells {
+	if c.cellNum >= node.NumCells {
 		// Check if there is a next leaf node
-		nextLeaf := *leafNodeNextLeaf(page)
-		if nextLeaf == 0 {
+		if node.NextLeaf == 0 {
 			c.endOfTable = true
 		} else {
-			c.pageNum = nextLeaf
+			c.pageNum = node.NextLeaf
 			c.cellNum = 0
 		}
 	}
 }
 
-// Value returns a pointer to the position described by the cursor.
-func (c *Cursor) Value() []byte {
-	pageNum := c.pageNum
-	page, err := c.table.pager.getPage(pageNum)
+// Value returns the row at the current cursor position.
+func (c *Cursor) Value() Row {
+	node, err := c.table.pager.getLeafNode(c.pageNum)
 	if err != nil {
 		panic(err) // TODO: In production code, handle this error properly
 	}
 
-	return leafNodeValue(page, c.cellNum)
+	return node.Cells[c.cellNum].Value
 }
 
 func (c *Cursor) IsEndOfTable() bool {
@@ -46,102 +42,110 @@ func (c *Cursor) IsEndOfTable() bool {
 }
 
 func (c *Cursor) InsertLeafNode(key uint32, value *Row) error {
-	page, err := c.table.pager.getPage(c.pageNum)
+	node, err := c.table.pager.getLeafNode(c.pageNum)
 	if err != nil {
 		return err
 	}
 
-	numCells := *leafNodeNumCells(page)
-	if numCells >= uint32(LeafNodeMaxCells) {
-		// TODO: add log to file
+	if node.NumCells >= uint32(LeafNodeMaxCells) {
 		return c.SplitAndInsert(key, value)
 	}
 
-	if c.cellNum < numCells {
+	if c.cellNum < node.NumCells {
 		// Make room for new cell by shifting cells to the right
-		for i := numCells; i > c.cellNum; i-- {
-			dest := leafNodeCell(page, i)
-			src := leafNodeCell(page, i-1)
-			copy(dest, src)
+		for i := node.NumCells; i > c.cellNum; i-- {
+			node.Cells[i] = node.Cells[i-1]
 		}
 	}
 
-	*leafNodeNumCells(page) = numCells + 1
-	*leafNodeKey(page, c.cellNum) = key
-	serializeRow(value, leafNodeValue(page, c.cellNum))
+	node.NumCells++
+	node.Cells[c.cellNum].Key = key
+	node.Cells[c.cellNum].Value = *value
 
-	return nil
+	return c.table.pager.saveLeafNode(c.pageNum, node)
 }
 
 func (c *Cursor) SplitAndInsert(key uint32, value *Row) error {
-	oldPage, err := c.table.pager.getPage(c.pageNum)
+	oldNode, err := c.table.pager.getLeafNode(c.pageNum)
 	if err != nil {
 		return err
 	}
+
 	newPageNum := c.table.pager.getUnusedPageNum()
-	newPage, err := c.table.pager.getPage(newPageNum)
-	if err != nil {
-		return err
-	}
-	initializeLeafNode(newPage)
-	*nodeParent(newPage) = *nodeParent(oldPage)
-	*leafNodeNextLeaf(newPage) = *leafNodeNextLeaf(oldPage)
-	*leafNodeNextLeaf(oldPage) = newPageNum
+	newNode := NewLeafNode()
+	newNode.Parent = oldNode.Parent
+	newNode.NextLeaf = oldNode.NextLeaf
+	oldNode.NextLeaf = newPageNum
 
 	// Move half the cells to the new page
 	// We need to distribute (LeafNodeMaxCells + 1) cells into:
-	// - oldPage: LeafNodeLeftSplitCount cells (indices 0 to LeafNodeLeftSplitCount-1)
-	// - newPage: LeafNodeRightSplitCount cells (indices 0 to LeafNodeRightSplitCount-1)
-	for i := LeafNodeMaxCells; i >= 0; i-- {
-		var destPage []byte
-		var indexWithinPage int
+	// - oldNode: LeafNodeLeftSplitCount cells (indices 0 to LeafNodeLeftSplitCount-1)
+	// - newNode: LeafNodeRightSplitCount cells (indices 0 to LeafNodeRightSplitCount-1)
 
-		if i >= LeafNodeLeftSplitCount {
-			destPage = newPage
-			indexWithinPage = i - LeafNodeLeftSplitCount
-		} else {
-			destPage = oldPage
-			indexWithinPage = i
-		}
-		dest := leafNodeCell(destPage, uint32(indexWithinPage))
+	// First, collect all cells including the new one
+	type cellData struct {
+		key   uint32
+		value Row
+	}
+	allCells := make([]cellData, LeafNodeMaxCells+1)
 
-		// Case 1: At the new row's insertion position - write the new row
-		// Destination: Either oldPage or newPage (determined by split logic above)
-		// Source: The new value parameter being inserted
-		if uint32(i) == c.cellNum {
-			serializeRow(value,
-				leafNodeValue(destPage, uint32(indexWithinPage)))
-			*leafNodeKey(destPage, uint32(indexWithinPage)) = key
-			// Case 2: After the insertion position - shift existing cells right by 1
-			// Destination: Position i in either oldPage or newPage
-			// Source: Position (i-1) from oldPage (skipping over where new row will go)
-		} else if uint32(i) > c.cellNum {
-			copy(dest, leafNodeCell(oldPage, uint32((i-1))))
-			// Case 3: Before the insertion position - copy existing cells as-is
-			// Destination: Position i in either oldPage or newPage
-			// Source: Position i from oldPage (no shift needed for cells before insertion)
+	// Copy existing cells and insert new one at the right position
+	insertIdx := 0
+	for i := uint32(0); i <= uint32(LeafNodeMaxCells); i++ {
+		if i == c.cellNum {
+			allCells[i] = cellData{key: key, value: *value}
 		} else {
-			copy(dest, leafNodeCell(oldPage, uint32(i)))
+			srcIdx := insertIdx
+			if insertIdx >= int(oldNode.NumCells) {
+				// This shouldn't happen if our logic is correct
+				break
+			}
+			allCells[i] = cellData{
+				key:   oldNode.Cells[srcIdx].Key,
+				value: oldNode.Cells[srcIdx].Value,
+			}
+			insertIdx++
 		}
 	}
 
-	*leafNodeNumCells(oldPage) = uint32(LeafNodeLeftSplitCount)
-	*leafNodeNumCells(newPage) = uint32(LeafNodeRightSplitCount)
+	// Redistribute cells
+	for i := 0; i < LeafNodeLeftSplitCount; i++ {
+		oldNode.Cells[i].Key = allCells[i].key
+		oldNode.Cells[i].Value = allCells[i].value
+	}
+	oldNode.NumCells = uint32(LeafNodeLeftSplitCount)
 
-	if isNodeRoot(oldPage) {
+	for i := 0; i < LeafNodeRightSplitCount; i++ {
+		srcIdx := LeafNodeLeftSplitCount + i
+		newNode.Cells[i].Key = allCells[srcIdx].key
+		newNode.Cells[i].Value = allCells[srcIdx].value
+	}
+	newNode.NumCells = uint32(LeafNodeRightSplitCount)
+
+	// Save both nodes
+	if err := c.table.pager.saveLeafNode(c.pageNum, oldNode); err != nil {
+		return err
+	}
+	if err := c.table.pager.saveLeafNode(newPageNum, newNode); err != nil {
+		return err
+	}
+
+	if oldNode.IsRootNode() {
 		return c.table.createNewRoot(newPageNum)
 	} else {
-		parentPageNum := *nodeParent(oldPage)
-		parentPage, err := c.table.pager.getPage(parentPageNum)
+		parentPageNum := oldNode.Parent
+		parentNode, err := c.table.pager.getInternalNode(parentPageNum)
 		if err != nil {
 			return err
 		}
 		// Find the child index by page number (more reliable than by key)
-		oldChildIndex := internalNodeFindChildByPage(parentPage, c.pageNum)
+		oldChildIndex := parentNode.FindChildByPage(c.pageNum)
 		// Update the key for this child (only if it's not the rightmost child)
-		if oldChildIndex < *internalNodeNumKeys(parentPage) {
-			newMaxKey := getNodeMaxKey(oldPage)
-			*internalNodeKey(parentPage, oldChildIndex) = newMaxKey
+		if oldChildIndex < parentNode.NumKeys {
+			parentNode.Cells[oldChildIndex].Key = oldNode.GetMaxKey()
+		}
+		if err := c.table.pager.saveInternalNode(parentPageNum, parentNode); err != nil {
+			return err
 		}
 		return c.table.internalNodeInsert(parentPageNum, newPageNum)
 	}
@@ -154,13 +158,12 @@ func TableStart(table *Table) *Cursor {
 		panic(err)
 	}
 
-	page, err := table.pager.getPage(c.pageNum)
+	node, err := table.pager.getLeafNode(c.pageNum)
 	if err != nil {
 		panic(err)
 	}
 
-	numCells := *leafNodeNumCells(page)
-	if numCells == 0 {
+	if node.NumCells == 0 {
 		c.endOfTable = true
 	}
 
@@ -175,12 +178,11 @@ func TableEnd(table *Table) *Cursor {
 		endOfTable: true,
 	}
 
-	rootNode, err := table.pager.getPage(c.pageNum)
+	rootNode, err := table.pager.getLeafNode(c.pageNum)
 	if err != nil {
 		panic(err) // TODO: In production code, handle this error properly
 	}
 
-	numCells := *leafNodeNumCells(rootNode)
-	c.cellNum = numCells
+	c.cellNum = rootNode.NumCells
 	return c
 }
